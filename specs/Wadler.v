@@ -33,6 +33,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   Inductive STyp :=
   | STyp_Var (x : pvn)
   | STyp_VarDual (x : pvn)
+  | STyp_Const (x : pvn)
+  | STyp_ConstDual (x : pvn)
   | STyp_Times (t1 t2 : STyp)
   | STyp_Par (t1 t2 : STyp)
   | STyp_Plus (t1 t2 : STyp)
@@ -51,6 +53,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   match t with
   | STyp_Var x => STyp_VarDual x
   | STyp_VarDual x => STyp_Var x
+  | STyp_Const x => STyp_ConstDual x
+  | STyp_ConstDual x => STyp_Const x
   | STyp_Times t1 t2 => STyp_Par (dual t1) (dual t2)
   | STyp_Par t1 t2 => STyp_Times (dual t1) (dual t2)
   | STyp_Plus t1 t2 => STyp_With (dual t1) (dual t2)
@@ -77,6 +81,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   match t with
   | STyp_Var x => if eqb x x' then t' else STyp_Var x
   | STyp_VarDual x => if eqb x x' then dual t' else STyp_VarDual x
+  | STyp_Const x => STyp_Const x
+  | STyp_ConstDual x => STyp_ConstDual x
   | STyp_Times t1 t2 => STyp_Times (styp_subst x' t1 t') (styp_subst x' t2 t')
   | STyp_Par t1 t2 => STyp_Par (styp_subst x' t1 t') (styp_subst x' t2 t')
   | STyp_Plus t1 t2 => STyp_Plus (styp_subst x' t1 t') (styp_subst x' t2 t')
@@ -111,6 +117,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   match t with
   | STyp_Var x => if in_dec eq_dec x bvar then [] else [x]
   | STyp_VarDual x => if in_dec eq_dec x bvar then [] else [x]
+  | STyp_Const x => []
+  | STyp_ConstDual x => []
   | STyp_Times t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
   | STyp_Par t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
   | STyp_Plus t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
@@ -166,6 +174,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     induction t; auto; intros l l'.
     1,2: cbn; destruct (in_dec eq_dec x l'); [intros; apply incl_nil_l|];
          intros Hincl; destruct (in_dec eq_dec x l); [|apply incl_refl]; unfold incl in Hincl; exfalso; firstorder.
+    1,2: cbn; intros; apply incl_refl.
     1,2,3,4: cbn; intros Hincl; specialize (IHt1 _ _ Hincl); specialize (IHt2 _ _ Hincl); unfold incl in *; intros x; repeat rewrite in_app_iff; firstorder.
     3,4,5,6: cbn; intros; apply incl_refl.
     1,2: cbn; intros Hincl; apply IHt; unfold incl in *; clear IHt; cbn; firstorder.
@@ -187,7 +196,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros v v' t t'.
     induction t.
 
-    3,4,5,6,7,8,11,12,13,14: cbn; repeat rewrite in_app_iff; tauto.
+    3,4,5,6,7,8,9,10,13,14,15,16: cbn; repeat rewrite in_app_iff; tauto.
 
     - cbn.
       destruct (eqb_spec x v).
@@ -269,6 +278,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   match t with
   | STyp_Var x => if eqb x s then l else []
   | STyp_VarDual x => if eqb x s then l else []
+  | STyp_Const x => []
+  | STyp_ConstDual x => []
   | STyp_Times t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
   | STyp_Par t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
   | STyp_Plus t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
@@ -291,6 +302,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros t v.
     induction t.
     1,2: cbn; destruct (eqb x v); auto; intros; apply incl_refl.
+    1,2: cbn; intros; apply incl_refl.
     1,2,3,4: cbn; intros l l' Hincl x Hx; rewrite in_app_iff in Hx; specialize (IHt1 _ _ Hincl); specialize (IHt2 _ _ Hincl); rewrite in_app_iff; unfold incl in IHt1, IHt2; clear Hincl; firstorder.
     1,2: cbn; auto.
     3,4,5,6: cbn; intros; apply incl_refl.
@@ -311,6 +323,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros t v v'.
     induction t.
     1,2: cbn; destruct (eqb_spec x v); [auto | tauto].
+    1,2: cbn; auto.
     1,2,3,4: intros l; cbn;
              repeat rewrite in_app_iff;
              specialize (IHt1 l); specialize (IHt2 l);
@@ -336,6 +349,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     induction t.
     1,2: intros l l' Hincl; cbn;
          destruct (eqb_spec x v); [subst v; auto | auto].
+    1,2: cbn; auto.
     1,2,3,4: intros l l' Hincl; cbn;
              repeat rewrite in_app_iff;
              intros Hin;
@@ -365,6 +379,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros v t l.
     revert l; induction t.
     1,2: cbn; destruct (eqb_spec x v); [subst v; tauto | tauto].
+    1,2: cbn; auto.
     1,2,3,4,5,6,9,10,11,12: cbn; intros l; try rewrite in_app_iff; intros Hnin; try (rewrite (IHt1 l), (IHt2 l)); try (rewrite (IHt l)); auto.
     1,2: cbn; intros l Hin;
          destruct (eqb_spec v0 v); auto;
@@ -392,7 +407,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     induction t.
     1,2: intros l; cbn; destruct (eqb_spec x v'); [subst v'; destruct (eqb_spec x v); try contradiction; try rewrite <- styp_forbidden_dual; try apply styp_forbidden_empty; auto | cbn; destruct (eqb_spec x v); auto].
 
-    1,2,3,4,5,6,9,10,11,12: cbn; intros l; intros Hnin; try (specialize (IHt1 l Hnin); specialize (IHt2 l Hnin)); try specialize (IHt l Hnin); congruence.
+    1,2,3,4,5,6,7,8,11,12,13,14: cbn; intros l; intros Hnin; try (specialize (IHt1 l Hnin); specialize (IHt2 l Hnin)); try specialize (IHt l Hnin); congruence.
 
     - cbn; intros l Hnin.
       destruct (eqb_spec v0 v').
@@ -430,6 +445,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     1: cbn; intros _ _;
        destruct (eqb x v); [|cbn; destruct (eqb x v'); auto];
        rewrite <- styp_forbidden_dual; auto.
+
+    1,2: cbn; auto.
 
     1,2,3,4: cbn; intros Hnin1 Hnin2 Hnin3;
              rewrite in_app_iff in Hnin1, Hnin2;
@@ -472,7 +489,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros v v' a b e Hneq.
     induction b.
 
-    3,4,5,6,7,8,11,12,13,14:
+    3,4,5,6,7,8,9,10,13,14,15,16:
          cbn; intros Hnin1 Hnin2;
          rewrite Forall_forall in Hnin1, Hnin2;
          try (repeat rewrite Forall_forall in IHb1, IHb2;
@@ -593,7 +610,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros v a b e.
     induction b.
 
-    3,4,5,6,7,8,11,12,13,14: cbn; congruence.
+    3,4,5,6,7,8,9,10,13,14,15,16: cbn; congruence.
 
     - cbn; destruct (eqb_spec x v); auto.
       cbn; destruct (eqb_spec x v); try contradiction; auto.
@@ -621,7 +638,27 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
 
   End STyp.
 
-  Section Process.
+  (* When working with processes we often also need "process constants",
+     i.e. processes with fixed names and typing information.
+     The challenge is to incorporate them in a clean way into the ground logic system.
+
+     Our current handling is to assume a relation from "process constants" to arity and type.
+   *)
+
+  Module Type ProcConstSig.
+
+    Parameter pcn : Type.
+    Parameter pcn_sig : pcn -> list STyp -> Prop.
+    Parameter pcn_sig_subst :
+      forall c l v e,
+      Forall (fun r => Forall (fun v' => ~ In v' (styp_forbidden r v)) (fvar e)) l ->
+      pcn_sig c l ->
+      pcn_sig c (map (fun r => styp_subst v r e) l).
+
+  End ProcConstSig.
+
+  Section SEnv.
+
   Definition chn_eqb := fun x y => if ChannelName.eq_dec x y then true else false.
   Definition chn_eq_dec := ChannelName.eq_dec.
   Definition chn_eqb_spec x y : reflect (x = y) (chn_eqb x y).
@@ -679,6 +716,179 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     apply NoDup_app; auto.
   Qed.
 
+  Definition str_list_repl (l : list chn) (s : chn) (t : chn) :=
+  map (fun x => if eqb x s then t else x) l.
+
+  Definition senv_rename (senv : SEnv) (s : chn) (t : chn) :=
+  map (fun z => match z with (x, a) => if eqb x s then (t, a) else (x, a) end) senv.
+
+  Lemma str_list_repl_ident : forall l s, str_list_repl l s s = l.
+  Proof.
+    intros l s.
+    unfold str_list_repl.
+    rewrite <- map_id.
+    apply map_ext.
+    intros s0; destruct (eqb_spec s0 s); try subst; auto.
+  Qed.
+
+  Lemma senv_rename_ident : forall (senv : SEnv) (s : chn), senv_rename senv s s = senv.
+  Proof.
+    intros senv s.
+    unfold senv_rename.
+    rewrite <- map_id.
+    apply map_ext.
+    intros z; destruct z.
+    destruct (eqb_spec t s); try subst; auto.
+  Qed.
+
+  Lemma senv_rename_repl : forall senv s t, map fst (senv_rename senv s t) = str_list_repl (map fst senv) s t.
+  Proof.
+    intros senv.
+    unfold str_list_repl, senv_rename.
+    intros s t.
+    do 2 rewrite map_map.
+    apply map_ext.
+    intros z; destruct z; cbn.
+    destruct (eqb_spec t0 s); cbn; auto.
+  Qed.
+
+  Lemma str_list_repl_nin : forall l s t,
+  ~ In s l ->
+  str_list_repl l s t = l.
+  Proof.
+    intros l s t Hnin.
+    unfold str_list_repl.
+    rewrite <- map_id.
+    apply map_ext_in.
+    intros s0 Hin.
+    destruct (eqb_spec s0 s); auto.
+    subst s0; contradiction.
+  Qed.
+
+  Lemma senv_rename_nin : forall senv s t,
+  ~ In s (map fst senv) ->
+  senv_rename senv s t = senv.
+  Proof.
+    intros senv s t Hnin.
+    rewrite <- (map_id senv) at 2.
+    unfold senv_rename.
+    apply map_ext_in.
+    intros z Hz; destruct z.
+    destruct (eqb_spec t0 s); auto.
+    subst t0.
+    exfalso; apply Hnin; rewrite in_map_iff; eexists; split.
+    2: apply Hz.
+    auto.
+  Qed.
+
+  Lemma senv_rename_app : forall senv senv' s t,
+  senv_rename (senv ++ senv') s t = senv_rename senv s t ++ senv_rename senv' s t.
+  Proof.
+    intros senv senv' s t.
+    unfold senv_rename.
+    apply map_app.
+  Qed.
+
+  Lemma str_list_repl_nodup : forall l s t,
+  ~ In t l ->
+  NoDup l ->
+  NoDup (str_list_repl l s t).
+  Proof.
+    intros l s t Hnin.
+    induction l.
+    - cbn; constructor.
+    - cbn; intros Hnodup.
+      inversion Hnodup as [| ? ? Ha Hl]; subst.
+      fold (str_list_repl l s t); destruct (eqb_spec a s).
+      + subst s; constructor.
+        2: cbn in Hnin; apply IHl; tauto.
+        intros Hin; unfold str_list_repl in Hin.
+        rewrite in_map_iff in Hin.
+        destruct Hin as (x & Hx1 & Hx2).
+        destruct (eqb_spec x a).
+        * subst; contradiction.
+        * subst; cbn in Hnin; tauto.
+      + constructor.
+        2: cbn in Hnin; apply IHl; tauto.
+        intros Hin; unfold str_list_repl in Hin.
+        rewrite in_map_iff in Hin.
+        destruct Hin as (x & Hx1 & Hx2).
+        destruct (eqb_spec x s).
+        * subst; cbn in Hnin; tauto.
+        * subst; contradiction.
+  Qed.
+
+  Lemma senv_rename_nin_valid : forall senv s t,
+  senv_valid senv ->
+  ~ In t (map fst senv) ->
+  senv_valid (senv_rename senv s t).
+  Proof.
+    intros senv s t Hval Hnin.
+    unfold senv_valid.
+    unfold senv_valid in Hval.
+    revert Hval Hnin.
+    induction senv.
+    - cbn; constructor.
+    - intros Hval Hin.
+      cbn in Hin.
+      cbn in Hval.
+      rewrite NoDup_cons_iff in Hval.
+      specialize (IHsenv ltac:(tauto) ltac:(tauto)).
+
+      unfold senv_rename.
+      cbn [map fst].
+      fold (senv_rename senv s t).
+
+      constructor; auto.
+      unfold senv_rename.
+      rewrite map_map.
+      destruct a; cbn in Hval, Hin.
+      destruct (eqb_spec t0 s).
+      + subst t0.
+        cbn.
+        intros Hin'.
+        rewrite in_map_iff in Hin'.
+        destruct Hin' as (z & Hz1 & Hz2).
+        destruct z.
+        destruct (eqb_spec t0 s); cbn in Hz1; try subst t.
+        * subst t0.
+          apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+        * apply Hin; right; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+      + cbn.
+        intros Hin'.
+        rewrite in_map_iff in Hin'.
+        destruct Hin' as (z & Hz1 & Hz2).
+        destruct z.
+        destruct (eqb_spec t1 s); cbn in Hz1; subst t0; try subst t1.
+        * tauto.
+        * apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+  Qed.
+
+  Lemma senv_rename_snd :
+  forall senv s t, map snd (senv_rename senv s t) = map snd senv.
+  Proof.
+    intros senv s t.
+    unfold senv_rename.
+    rewrite map_map.
+    apply map_ext.
+    intros z.
+    destruct z.
+    destruct (eqb t0 s); cbn; auto.
+  Qed.
+
+  End SEnv.
+
+  Module Process (ProcConstSig : ProcConstSig).
+
+  Import ProcConstSig.
+
+  #[local] Notation eqb := chn_eqb.
+  #[local] Notation eq_dec := chn_eq_dec.
+  #[local] Notation eqb_spec := chn_eqb_spec.
+  #[local] Notation eqb_refl := chn_eqb_refl.
+  #[local] Notation eqb_neq := chn_eqb_neq.
+  #[local] Notation negb_eqb_true_iff := chn_negb_eqb_true_iff.
+
   (* Compared to Wadler's paper, the main difference here is the addition of Proc_ClientNull and Proc_ClientSplit.
      This is due to syntactical difficulties around implementing channel renaming.
 
@@ -696,6 +906,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
      We thus had to add ClientNull and ClientSplit to explicitly keep track of channel names that are added and deleted.
    *)
   Inductive Process :=
+  | Proc_Const (n : pcn) (l : list chn)
   | Proc_Link (x : chn) (y : chn)
   | Proc_Comp (x : chn) (a : STyp) (p : Process) (q : Process)
   | Proc_OutCh (x : chn) (y : chn) (p : Process) (q : Process)
@@ -708,7 +919,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_ClientNull (x : chn) (p : Process)
   | Proc_ClientSplit (x : chn) (y : chn) (p : Process)
   | Proc_OutTyp (x : chn) (a : STyp) (v : pvn) (t : STyp) (p : Process)
-  | Proc_InTyp (x : chn) (v : pvn) (p : Process)
+  | Proc_InTyp (x : chn) (v : pvn) (t : STyp) (p : Process)
   | Proc_OutUnit (x : chn)
   | Proc_InUnit (x : chn) (p : Process)
   | Proc_EmptyCase (x : chn) (l : list chn).
@@ -716,6 +927,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   (* List of names of channels provided by a process *)
   Fixpoint proc_channels (p : Process) :=
   match p with
+  | Proc_Const _ l => l
   | Proc_Link x y => [x; y]
   | Proc_Comp x a p q => filter (fun s => negb (eqb x s)) ((proc_channels p) ++ (proc_channels q))
   | Proc_OutCh x y p q => filter (fun s => negb (eqb y s)) (proc_channels p) ++ (proc_channels q)
@@ -728,7 +940,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_ClientNull x p => x :: (proc_channels p)
   | Proc_ClientSplit x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
   | Proc_OutTyp x a _ _ p => proc_channels p
-  | Proc_InTyp x v p => proc_channels p
+  | Proc_InTyp x v t p => proc_channels p
   | Proc_OutUnit x => [x]
   | Proc_InUnit x p => x :: proc_channels p
   | Proc_EmptyCase x l => x :: l
@@ -738,6 +950,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   (* Otherwise, return [] *)
   Fixpoint proc_forbidden (p : Process) (s : chn) :=
   match p with
+  | Proc_Const _ l => if in_dec eq_dec s l then filter (fun s' => negb (eqb s' s)) l else []
   | Proc_Link x y => if eqb x s then [y] else if eqb y s then [x] else []
   | Proc_Comp x a p q =>
       let gamma := filter (fun s => negb (eqb x s)) (proc_channels p) in
@@ -762,7 +975,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
   | Proc_ClientSplit x y p => if eqb y s then [] else proc_forbidden p s
   | Proc_OutTyp x a _ _ p => proc_forbidden p s
-  | Proc_InTyp x v p => proc_forbidden p s
+  | Proc_InTyp x v _ p => proc_forbidden p s
   | Proc_OutUnit x => []
   | Proc_InUnit x p =>
       let gamma := proc_channels p in
@@ -772,6 +985,9 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   end.
 
   Inductive cp : Process -> SEnv -> Prop :=
+  | cp_const :
+    forall c l l',
+      NoDup l -> pcn_sig c l' -> length l = length l' -> cp (Proc_Const c l) (combine l l')
   | cp_ax :
     forall w x a, ~ w = x -> cp (Proc_Link w x) [(w, dual a); (x, a)]
   | cp_cut :
@@ -833,7 +1049,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     forall x v a p gamma,
       Forall (fun r => ~ In v (fvar r)) (map snd gamma) ->
       cp p ((x, a) :: gamma) ->
-      cp (Proc_InTyp x v p) ((x, STyp_Forall v a) :: gamma)
+      cp (Proc_InTyp x v a p) ((x, STyp_Forall v a) :: gamma)
   | cp_one : forall x, cp (Proc_OutUnit x) [(x, STyp_One)]
   | cp_bot :
     forall x p gamma,
@@ -859,6 +1075,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   Proof.
     intros p senv Hcp.
     induction Hcp.
+    - unfold senv_valid; rewrite combine_map_fst; auto.
     - unfold senv_valid; cbn; constructor; [firstorder | constructor; auto; constructor].
     - apply senv_disjoint_app_valid; auto; eapply NoDup_cons_inv; eauto.
     - rewrite senv_valid_cons.
@@ -897,6 +1114,10 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros p senv x Hcp.
     revert x.
     induction Hcp.
+    - (* Const *)
+      cbn; rewrite combine_map_fst; auto.
+      intros; tauto.
+
     - (* Link w x *)
       cbn; intros; split; auto.
 
@@ -1044,6 +1265,11 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros p gamma s Hcp.
     revert s.
     induction Hcp.
+    - (* Proc_Const *)
+      cbn; intros s Hin.
+      rewrite combine_map_fst in Hin; auto.
+      destruct (in_dec eq_dec s l); auto; contradiction.
+
     - (* Proc_Link w x *)
       cbn; intros s Hin.
       destruct (eqb_spec w s).
@@ -1224,6 +1450,14 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros p gamma s t Hcp.
     revert s t.
     induction Hcp.
+    - (* Proc_Const *)
+      cbn; intros s t.
+      rewrite combine_map_fst; auto.
+      intros Hin Hin' Hneq.
+      destruct (in_dec eq_dec s l); try contradiction.
+      rewrite filter_In; split; auto.
+      rewrite negb_eqb_true_iff; auto.
+
     - (* Proc_Link *)
       cbn; intros s t.
       (* Case 1: s = w *)
@@ -1617,142 +1851,12 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       auto.
   Qed.
 
-  Definition str_list_repl (l : list chn) (s : chn) (t : chn) :=
-  map (fun x => if eqb x s then t else x) l.
-
-  Definition senv_rename (senv : SEnv) (s : chn) (t : chn) :=
-  map (fun z => match z with (x, a) => if eqb x s then (t, a) else (x, a) end) senv.
-
-  Lemma str_list_repl_ident : forall l s, str_list_repl l s s = l.
-  Proof.
-    intros l s.
-    unfold str_list_repl.
-    rewrite <- map_id.
-    apply map_ext.
-    intros s0; destruct (eqb_spec s0 s); try subst; auto.
-  Qed.
-
-  Lemma senv_rename_ident : forall (senv : SEnv) (s : chn), senv_rename senv s s = senv.
-  Proof.
-    intros senv s.
-    unfold senv_rename.
-    rewrite <- map_id.
-    apply map_ext.
-    intros z; destruct z.
-    destruct (eqb_spec t s); try subst; auto.
-  Qed.
-
-  Lemma senv_rename_repl : forall senv s t, map fst (senv_rename senv s t) = str_list_repl (map fst senv) s t.
-  Proof.
-    intros senv.
-    unfold str_list_repl, senv_rename.
-    intros s t.
-    do 2 rewrite map_map.
-    apply map_ext.
-    intros z; destruct z; cbn.
-    destruct (eqb_spec t0 s); cbn; auto.
-  Qed.
-
-  Lemma str_list_repl_nin : forall l s t,
-  ~ In s l ->
-  str_list_repl l s t = l.
-  Proof.
-    intros l s t Hnin.
-    unfold str_list_repl.
-    rewrite <- map_id.
-    apply map_ext_in.
-    intros s0 Hin.
-    destruct (eqb_spec s0 s); auto.
-    subst s0; contradiction.
-  Qed.
-
-  Lemma senv_rename_nin : forall senv s t,
-  ~ In s (map fst senv) ->
-  senv_rename senv s t = senv.
-  Proof.
-    intros senv s t Hnin.
-    rewrite <- (map_id senv) at 2.
-    unfold senv_rename.
-    apply map_ext_in.
-    intros z Hz; destruct z.
-    destruct (eqb_spec t0 s); auto.
-    subst t0.
-    exfalso; apply Hnin; rewrite in_map_iff; eexists; split.
-    2: apply Hz.
-    auto.
-  Qed.
-
-  Lemma senv_rename_app : forall senv senv' s t,
-  senv_rename (senv ++ senv') s t = senv_rename senv s t ++ senv_rename senv' s t.
-  Proof.
-    intros senv senv' s t.
-    unfold senv_rename.
-    apply map_app.
-  Qed.
-
-  Lemma senv_rename_nin_valid : forall senv s t,
-  senv_valid senv ->
-  ~ In t (map fst senv) ->
-  senv_valid (senv_rename senv s t).
-  Proof.
-    intros senv s t Hval Hnin.
-    unfold senv_valid.
-    unfold senv_valid in Hval.
-    revert Hval Hnin.
-    induction senv.
-    - cbn; constructor.
-    - intros Hval Hin.
-      cbn in Hin.
-      cbn in Hval.
-      rewrite NoDup_cons_iff in Hval.
-      specialize (IHsenv ltac:(tauto) ltac:(tauto)).
-
-      unfold senv_rename.
-      cbn [map fst].
-      fold (senv_rename senv s t).
-
-      constructor; auto.
-      unfold senv_rename.
-      rewrite map_map.
-      destruct a; cbn in Hval, Hin.
-      destruct (eqb_spec t0 s).
-      + subst t0.
-        cbn.
-        intros Hin'.
-        rewrite in_map_iff in Hin'.
-        destruct Hin' as (z & Hz1 & Hz2).
-        destruct z.
-        destruct (eqb_spec t0 s); cbn in Hz1; try subst t.
-        * subst t0.
-          apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-        * apply Hin; right; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-      + cbn.
-        intros Hin'.
-        rewrite in_map_iff in Hin'.
-        destruct Hin' as (z & Hz1 & Hz2).
-        destruct z.
-        destruct (eqb_spec t1 s); cbn in Hz1; subst t0; try subst t1.
-        * tauto.
-        * apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-  Qed.
-
-  Lemma senv_rename_snd :
-  forall senv s t, map snd (senv_rename senv s t) = map snd senv.
-  Proof.
-    intros senv s t.
-    unfold senv_rename.
-    rewrite map_map.
-    apply map_ext.
-    intros z.
-    destruct z.
-    destruct (eqb t0 s); cbn; auto.
-  Qed.
-
   (* Replace channel name s with t *)
   (* If s is a channel of p, then we assume ~ In t (proc_forbidden p s) *)
   (* If s is not a channel of p, leave p unchanged *)
   Fixpoint proc_rename (p : Process) (s : chn) (t : chn) :=
   match p with
+  | Proc_Const c l => Proc_Const c (str_list_repl l s t)
   | Proc_Link x y => Proc_Link (if eqb x s then t else x) (if eqb y s then t else y)
   | Proc_Comp x a p q => if eqb x s then Proc_Comp x a p q else Proc_Comp x a (proc_rename p s t) (proc_rename q s t)
   | Proc_OutCh x y p q => if eqb x s then Proc_OutCh t y p (proc_rename q s t) else if eqb y s then Proc_OutCh x y p (proc_rename q s t) else Proc_OutCh x y (proc_rename p s t) (proc_rename q s t)
@@ -1765,7 +1869,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_ClientNull x p => if eqb x s then Proc_ClientNull t p else Proc_ClientNull x (proc_rename p s t)
   | Proc_ClientSplit x y p => if eqb y s then Proc_ClientSplit x y p else if eqb x s then Proc_ClientSplit t y (proc_rename p s t) else Proc_ClientSplit x y (proc_rename p s t)
   | Proc_OutTyp x a v b p => if eqb x s then Proc_OutTyp t a v b (proc_rename p s t) else Proc_OutTyp x a v b (proc_rename p s t)
-  | Proc_InTyp x v p => if eqb x s then Proc_InTyp t v (proc_rename p s t) else Proc_InTyp x v (proc_rename p s t)
+  | Proc_InTyp x v b p => if eqb x s then Proc_InTyp t v b (proc_rename p s t) else Proc_InTyp x v b (proc_rename p s t)
   | Proc_OutUnit x => if eqb x s then Proc_OutUnit t else Proc_OutUnit x
   | Proc_InUnit x p => if eqb x s then Proc_InUnit t p else Proc_InUnit x (proc_rename p s t)
   | Proc_EmptyCase x l => if eqb x s then Proc_EmptyCase t l else Proc_EmptyCase x (str_list_repl l s t)
@@ -1776,7 +1880,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros p s.
     induction p.
     all: cbn; repeat match goal with |- context[eqb ?x ?y] => destruct (eqb_spec x y); try subst end; try congruence.
-    rewrite str_list_repl_ident; auto.
+    all: rewrite str_list_repl_ident; auto.
   Qed.  
 
   Lemma cp_proc_rename :
@@ -1800,6 +1904,29 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     (* Now the difficult part *)
     revert s t n.
     induction Hcp.
+    - (* Proc_Const *)
+      cbn; intros s t Hneq Hallow.
+      rewrite combine_map_fst; auto.
+      destruct (in_dec eq_dec s l).
+      + left; split; auto.
+        unfold senv_rename.
+        erewrite combine_map.
+        Unshelve.
+        4: exact (fun x => if eqb x s then t else x).
+        4: exact id.
+        2: intros z; destruct z; cbn; destruct (eqb t0 s); auto.
+        2: intros z; destruct z; cbn; destruct (eqb t0 s); auto.
+        fold (str_list_repl l s t).
+        constructor.
+        2,3: rewrite map_id; auto.
+        2: unfold str_list_repl; rewrite length_map; auto.
+        apply str_list_repl_nodup; auto.
+        intros Hin; apply Hallow.
+        rewrite filter_In.
+        rewrite negb_eqb_true_iff; auto.
+      + right; split; auto.
+        rewrite str_list_repl_nin; auto.
+
     - (* Proc_Link *)
       cbn; intros s t Hneq Hallow.
       (* Case 1: s = w *)
@@ -2977,6 +3104,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   (* Precondition for replacing a propositional variable P with Q *)
   Fixpoint proc_var_subst_pre (p : Process) (v : pvn) (v' : pvn) : Prop :=
   match p with
+  | Proc_Const _ _ => True
   | Proc_Link x y => True
   | Proc_Comp x a p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
   | Proc_OutCh x y p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
@@ -2989,7 +3117,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_ClientNull x p => proc_var_subst_pre p v v'
   | Proc_ClientSplit x y p => proc_var_subst_pre p v v'
   | Proc_OutTyp x a w b p => ~ In v' (styp_forbidden b w) /\ ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v'
-  | Proc_InTyp x w p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
+  | Proc_InTyp x w _ p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
   | Proc_OutUnit x => True
   | Proc_InUnit x p => proc_var_subst_pre p v v'
   | Proc_EmptyCase x l => True
@@ -3000,6 +3128,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   (* if v is not a free variable in p, leave p unchanged *)
   Fixpoint proc_var_subst (p : Process) (v : pvn) (e : STyp) : Process :=
   match p with
+  | Proc_Const c l => Proc_Const c l
   | Proc_Link x y => Proc_Link x y
   | Proc_Comp x a p q => Proc_Comp x (styp_subst v a e) (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_OutCh x y p q => Proc_OutCh x y (proc_var_subst p v e) (proc_var_subst q v e)
@@ -3012,7 +3141,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_ClientNull x p => Proc_ClientNull x (proc_var_subst p v e)
   | Proc_ClientSplit x y p => Proc_ClientSplit x y (proc_var_subst p v e)
   | Proc_OutTyp x a w b p => Proc_OutTyp x (styp_subst v a e) w (if pvn_eqb w v then b else styp_subst v b e) (proc_var_subst p v e)
-  | Proc_InTyp x w p => Proc_InTyp x w (if pvn_eqb w v then p else proc_var_subst p v e)
+  | Proc_InTyp x w b p => Proc_InTyp x w (if pvn_eqb w v then b else styp_subst v b e) (if pvn_eqb w v then p else proc_var_subst p v e)
   | Proc_OutUnit x => Proc_OutUnit x
   | Proc_InUnit x p => Proc_InUnit x (proc_var_subst p v e)
   | Proc_EmptyCase x l => Proc_EmptyCase x l
@@ -3027,6 +3156,21 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   Proof.
     intros p v e gamma Hcp.
     induction Hcp.
+    - (* Proc_Const *)
+      intros Hpre1 _; cbn.
+      rewrite combine_map_snd in Hpre1; auto.
+      eapply pcn_sig_subst in Hpre1.
+      2: apply H0.
+      erewrite combine_map.
+      Unshelve.
+      4: exact id.
+      4: exact (fun r => styp_subst v r e).
+      2: intros z; destruct z; cbn; auto.
+      2: intros z; destruct z; cbn; auto.
+      rewrite map_id.
+      constructor; auto.
+      rewrite length_map; auto.
+
     - (* Proc_Link *)
       intros _ _; cbn.
       rewrite <- styp_subst_dual.
@@ -3103,28 +3247,153 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
         do 2 rewrite map_map; cbn; auto.
 
     - (* Proc_InCh *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      repeat rewrite Forall_cons_iff in IHHcp.
+      do 2 rewrite Forall_forall in IHHcp.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp ltac:(repeat split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
+
+      constructor; auto.
 
     - (* Proc_OutLeft *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+      rewrite Forall_forall in IHHcp.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp ltac:(split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
+
+      constructor; auto.
 
     - (* Proc_OutRight *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+      rewrite Forall_forall in IHHcp.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp ltac:(split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
+
+      constructor; auto.
 
     - (* Proc_InCase *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify Hpre2 *)
+      apply Forall_and_inv in Hpre2.
+      destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+
+      (* Simplify IHHcp1, IHHcp2 *)
+      cbn in IHHcp1, IHHcp2.
+      rewrite Forall_cons_iff in IHHcp1, IHHcp2.
+      rewrite Forall_forall in IHHcp1, IHHcp2.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp1 ltac:(split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2_1).
+      specialize (IHHcp2 ltac:(split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2_2).
+
+      constructor; auto.
 
     - (* Proc_Server *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+      rewrite Forall_forall in IHHcp.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp ltac:(split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
+
+      constructor; auto.
+      2: rewrite map_map; auto.
+
+      rewrite Forall_forall; rewrite Forall_forall in H.
+      rewrite map_map; cbn.
+      intros z Hz.
+      rewrite in_map_iff in Hz.
+      destruct Hz as (m & Hm1 & Hm2); subst z.
+      specialize (H _ ltac:(rewrite in_map_iff; eexists; split; try apply Hm2; auto)).
+      destruct (snd m); try contradiction; cbn; auto.
 
     - (* Proc_Client *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+      rewrite Forall_forall in IHHcp.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp ltac:(split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
+
+      constructor; auto.
+      rewrite map_map; cbn; auto.
 
     - (* Proc_ClientNull *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      specialize (IHHcp Hpre1_2 Hpre2).
+
+      constructor; auto.
+      rewrite map_map; cbn; auto.
 
     - (* Proc_ClientSplit *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      repeat rewrite Forall_cons_iff in IHHcp.
+      rewrite Forall_forall in IHHcp.
+      rewrite Forall_forall in Hpre1_1.
+      specialize (IHHcp ltac:(repeat split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
+
+      constructor; auto.
 
     - (* Proc_OutTyp *)
       cbn; intros Hpre1 Hpre2.
@@ -3266,11 +3535,26 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       cbn; intros _ _; constructor.
 
     - (* STyp_Bot *)
-      admit.
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (_ & Hpre1_2).
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      specialize (IHHcp Hpre1_2 Hpre2).
+
+      constructor; auto.
+      rewrite map_map; auto.
 
     - (* STyp_Top *)
-      cbn.
-      admit.
+      cbn; intros _ _.
+      eassert (Heq : map fst gamma = _).
+      2: rewrite Heq; constructor.
+      1: rewrite map_map; cbn; auto.
+      1: rewrite map_map; cbn; auto.
+      unfold senv_valid; rewrite map_map; auto.
 
     - (* Permutation *)
       intros Hpre1 Hpre2.
@@ -3279,9 +3563,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       eapply cp_perm.
       1: apply IHHcp.
       apply Permutation_map; auto.
-  Admitted.
-
-  End Process.
+  Qed.
 
   Section Transformation.
 
@@ -3518,5 +3800,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   Admitted.
 
   End Transformation.
+
+  End Process.
 
 End Wadler.

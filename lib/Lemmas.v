@@ -59,3 +59,62 @@ Proof.
     1: subst x; rewrite in_app_iff in H1; tauto.
     apply IHl1; auto.
 Qed.
+
+Lemma combine_map_fst :
+  forall {T U : Type} (l : list T) (l' : list U), 
+  List.length l = List.length l' ->
+  map fst (combine l l') = l.
+Proof.
+  intros T U l.
+  induction l.
+  - cbn; auto.
+  - cbn.
+    intros l' Hl'.
+    destruct l'.
+    + cbn in Hl'; discriminate.
+    + cbn in Hl'; injection Hl'.
+      intros Heq.
+      specialize (IHl _ Heq).
+      cbn; rewrite IHl; auto.
+Qed.
+
+Lemma combine_map_snd :
+  forall {T U : Type} (l : list T) (l' : list U), 
+  List.length l = List.length l' ->
+  map snd (combine l l') = l'.
+Proof.
+  intros T U l.
+  induction l.
+  - cbn.
+    intros l'; destruct l'; cbn; try discriminate; auto.
+  - cbn.
+    intros l' Hl'.
+    destruct l'.
+    + cbn in Hl'; discriminate.
+    + cbn in Hl'; injection Hl'.
+      intros Heq.
+      specialize (IHl _ Heq).
+      cbn; rewrite IHl; auto.
+Qed.
+
+Lemma combine_map :
+  forall {T U T' U' : Type} f (g1 : T -> T') (g2 : U -> U') (l1 : list T) (l2 : list U),
+  (forall z, fst (f z) = g1 (fst z)) ->
+  (forall z, snd (f z) = g2 (snd z)) ->
+  map f (combine l1 l2) = combine (map g1 l1) (map g2 l2).
+Proof.
+  intros T U T' U' f g1 g2 l1 l2 Hg1 Hg2.
+  revert l2.
+  induction l1.
+  - cbn; auto.
+  - intros l2; cbn.
+    destruct l2; cbn; auto.
+    specialize (IHl1 l2).
+    specialize (Hg1 (a, u)).
+    specialize (Hg2 (a, u)).
+    cbn in Hg1, Hg2.
+    destruct (f (a, u)) eqn:Ef.
+    cbn in Hg1, Hg2.
+    subst t u0.
+    rewrite IHl1; auto.
+Qed.
