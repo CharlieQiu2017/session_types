@@ -1,0 +1,3522 @@
+(* Implementation of session types as in Wadler 2012 *)
+(* We want to understand what is exactly wrong with this theory, and why extensions like HCP are necessary *)
+
+From Stdlib Require Import
+  List
+  Structures.Equalities
+  Sorting.Permutation.
+From Session.lib Require Import
+  Lemmas.
+Import
+  ListNotations.
+Open Scope bool_scope.
+
+Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableType).
+
+  Notation pvn := PropVarName.t.
+  Notation chn := ChannelName.t.
+
+  Section STyp.
+  Definition pvn_eqb := fun x y => if PropVarName.eq_dec x y then true else false.
+  Definition pvn_eq_dec := PropVarName.eq_dec.
+  Definition pvn_eqb_spec x y : reflect (x = y) (pvn_eqb x y).
+  Proof. unfold pvn_eqb; destruct (PropVarName.eq_dec x y); constructor; auto. Qed.
+  Lemma pvn_eqb_refl : forall x, pvn_eqb x x = true.
+  Proof. intros x; destruct (pvn_eqb_spec x x); auto; try contradiction. Qed.
+
+  #[local] Notation eqb := pvn_eqb.
+  #[local] Notation eq_dec := pvn_eq_dec.
+  #[local] Notation eqb_spec := pvn_eqb_spec.
+  #[local] Notation eqb_refl := pvn_eqb_refl.
+
+  (* Session Types *)
+  Inductive STyp :=
+  | STyp_Var (x : pvn)
+  | STyp_VarDual (x : pvn)
+  | STyp_Times (t1 t2 : STyp)
+  | STyp_Par (t1 t2 : STyp)
+  | STyp_Plus (t1 t2 : STyp)
+  | STyp_With (t1 t2 : STyp)
+  | STyp_Excl (t : STyp)
+  | STyp_Ques (t : STyp)
+  | STyp_Exists (v : pvn) (t : STyp)
+  | STyp_Forall (v : pvn) (t : STyp)
+  | STyp_One
+  | STyp_Bot
+  | STyp_Zero
+  | STyp_Top.
+
+  (* Dual of type *)
+  Fixpoint dual (t : STyp) :=
+  match t with
+  | STyp_Var x => STyp_VarDual x
+  | STyp_VarDual x => STyp_Var x
+  | STyp_Times t1 t2 => STyp_Par (dual t1) (dual t2)
+  | STyp_Par t1 t2 => STyp_Times (dual t1) (dual t2)
+  | STyp_Plus t1 t2 => STyp_With (dual t1) (dual t2)
+  | STyp_With t1 t2 => STyp_Plus (dual t1) (dual t2)
+  | STyp_Excl t => STyp_Ques (dual t)
+  | STyp_Ques t => STyp_Excl (dual t)
+  | STyp_Exists v t => STyp_Forall v (dual t)
+  | STyp_Forall v t => STyp_Exists v (dual t)
+  | STyp_One => STyp_Bot
+  | STyp_Bot => STyp_One
+  | STyp_Zero => STyp_Top
+  | STyp_Top => STyp_Zero
+  end.
+
+  (* Dual is involutive *)
+  Lemma dual_involute : forall t, dual (dual t) = t.
+  Proof.
+    induction t.
+    all: cbn; auto; congruence.
+  Qed.
+
+  (* Substitution *)
+  Fixpoint styp_subst (x' : pvn) (t : STyp) (t' : STyp) :=
+  match t with
+  | STyp_Var x => if eqb x x' then t' else STyp_Var x
+  | STyp_VarDual x => if eqb x x' then dual t' else STyp_VarDual x
+  | STyp_Times t1 t2 => STyp_Times (styp_subst x' t1 t') (styp_subst x' t2 t')
+  | STyp_Par t1 t2 => STyp_Par (styp_subst x' t1 t') (styp_subst x' t2 t')
+  | STyp_Plus t1 t2 => STyp_Plus (styp_subst x' t1 t') (styp_subst x' t2 t')
+  | STyp_With t1 t2 => STyp_With (styp_subst x' t1 t') (styp_subst x' t2 t')
+  | STyp_Excl t => STyp_Excl (styp_subst x' t t')
+  | STyp_Ques t => STyp_Ques (styp_subst x' t t')
+  | STyp_Exists v t => if eqb v x' then STyp_Exists v t else STyp_Exists v (styp_subst x' t t')
+  | STyp_Forall v t => if eqb v x' then STyp_Forall v t else STyp_Forall v (styp_subst x' t t')
+  | STyp_One => STyp_One
+  | STyp_Bot => STyp_Bot
+  | STyp_Zero => STyp_Zero
+  | STyp_Top => STyp_Top
+  end.
+
+  (* Substitution preserves duality *)
+  Lemma styp_subst_dual :
+  forall x' t t',
+  dual (styp_subst x' t t') = styp_subst x' (dual t) t'.
+  Proof.
+    intros x' t.
+    induction t.
+    all: cbn; auto; try congruence.
+    all: intros t'.
+    1,2: destruct (eqb x x'); auto; apply dual_involute.
+    all: destruct (eqb v x'); auto; cbn; rewrite IHt; auto.
+  Qed.
+
+  (* Compute the list of free variables in a type *)
+  (* bvar is the list of variables that are already bound *)
+  (* Initially, we set bvar = [], and add variables to it as we recurse deeper into the expression *)
+  Fixpoint fvar' (t : STyp) (bvar : list pvn) :=
+  match t with
+  | STyp_Var x => if in_dec eq_dec x bvar then [] else [x]
+  | STyp_VarDual x => if in_dec eq_dec x bvar then [] else [x]
+  | STyp_Times t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
+  | STyp_Par t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
+  | STyp_Plus t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
+  | STyp_With t1 t2 => (fvar' t1 bvar) ++ (fvar' t2 bvar)
+  | STyp_Excl t => fvar' t bvar
+  | STyp_Ques t => fvar' t bvar
+  | STyp_Exists v t => fvar' t (v :: bvar)
+  | STyp_Forall v t => fvar' t (v :: bvar)
+  | STyp_One => []
+  | STyp_Bot => []
+  | STyp_Zero => []
+  | STyp_Top => []
+  end.
+
+  (* If a variable is bound then it is not in the free variable list *)
+  Lemma var_bound_not_free :
+  forall x' t l l',
+  incl l l' ->
+  In x' (fvar' t l') -> ~ In x' l.
+  Proof.
+    intros x' t.
+    induction t; auto; intros l l'.
+    1,2: cbn; destruct (in_dec eq_dec x l'); firstorder; subst x'; firstorder.
+    5,6: cbn; intros Hincl; apply IHt; clear IHt; firstorder.
+    all: cbn; intros Hincl Hin; apply in_app_or in Hin.
+    all: specialize (IHt1 l l'); specialize (IHt2 l l'); tauto.
+  Qed.
+
+  (* A variable that occurs in a nested expression is either a free variable of the whole expression, or is bound by some outer quantifier *)
+  Lemma var_free_or_bound :
+  forall x' t l l',
+  incl l l' ->
+  In x' (fvar' t l) -> In x' (fvar' t l') \/ In x' l'.
+  Proof.
+    intros x' t.
+    induction t; auto; intros l l'.
+    1,2: cbn; destruct (in_dec eq_dec x l); [contradiction|]; cbn.
+    1,2: destruct (in_dec eq_dec x l'); auto; intros ? Heq; right.
+    1,2: destruct Heq; [subst x'; auto | contradiction].
+
+    5,6: cbn; intros Hincl Hin.
+    5,6: pose proof (var_bound_not_free x' t (v :: l) (v :: l) ltac:(apply incl_refl) Hin) as Hnin; cbn in Hnin.
+    5,6: specialize (IHt (v :: l) (v :: l') ltac:(clear IHt; firstorder) Hin); firstorder.
+    all: cbn; intros Hincl Hin; rewrite in_app_iff; apply in_app_or in Hin; specialize (IHt1 _ _ Hincl); specialize (IHt2 _ _ Hincl); tauto.
+  Qed.
+
+  Lemma var_free_incl :
+  forall t l l',
+  incl l l' ->
+  incl (fvar' t l') (fvar' t l).
+  Proof.
+    intros t.
+    induction t; auto; intros l l'.
+    1,2: cbn; destruct (in_dec eq_dec x l'); [intros; apply incl_nil_l|];
+         intros Hincl; destruct (in_dec eq_dec x l); [|apply incl_refl]; unfold incl in Hincl; exfalso; firstorder.
+    1,2,3,4: cbn; intros Hincl; specialize (IHt1 _ _ Hincl); specialize (IHt2 _ _ Hincl); unfold incl in *; intros x; repeat rewrite in_app_iff; firstorder.
+    3,4,5,6: cbn; intros; apply incl_refl.
+    1,2: cbn; intros Hincl; apply IHt; unfold incl in *; clear IHt; cbn; firstorder.
+  Qed.
+
+  Lemma var_free_dual : forall t l, fvar' t l = fvar' (dual t) l.
+  Proof.
+    intros t; induction t; cbn; auto.
+    all: intros l; specialize (IHt1 l); specialize (IHt2 l); congruence.
+  Qed.
+
+  Definition fvar (t : STyp) := fvar' t [].
+
+  Lemma var_free_subst :
+  forall v v' t t',
+  In v' (fvar (styp_subst v t t')) ->
+  In v' (fvar t) /\ v' <> v \/ In v' (fvar t').
+  Proof.
+    intros v v' t t'.
+    induction t.
+
+    3,4,5,6,7,8,11,12,13,14: cbn; repeat rewrite in_app_iff; tauto.
+
+    - cbn.
+      destruct (eqb_spec x v).
+      + subst v; auto.
+      + cbn; intros Hin.
+        replace v' with x by tauto.
+        auto.
+
+    - cbn.
+      destruct (eqb_spec x v).
+      + subst v.
+        rewrite <- var_free_dual.
+        auto.
+      + cbn; intros Hin.
+        replace v' with x by tauto.
+        auto.
+
+    - cbn.
+      destruct (eqb_spec v0 v).
+      + subst v; cbn.
+        intros Hin.
+        pose proof (var_bound_not_free _ _ [v0] [v0] ltac:(apply incl_refl) Hin) as Hnin.
+        cbn in Hnin.
+        left; split; auto.
+      + cbn.
+        intros Hin.
+        pose proof (var_bound_not_free _ _ [v0] [v0] ltac:(apply incl_refl) Hin) as Hnin.
+        cbn in Hnin.
+        pose proof (var_free_incl (styp_subst v t t') [] [v0] ltac:(apply incl_nil_l)) as Hincl.
+        apply Hincl in Hin.
+        specialize (IHt Hin).
+        destruct IHt as [(IHt1 & IHt2) | IHt]; auto.
+        left; split; auto.
+        pose proof (var_free_or_bound v' t [] [v0] ltac:(apply incl_nil_l) IHt1) as Hbound.
+        destruct Hbound; [auto | tauto].
+
+    - cbn.
+      destruct (eqb_spec v0 v).
+      + subst v; cbn.
+        intros Hin.
+        pose proof (var_bound_not_free _ _ [v0] [v0] ltac:(apply incl_refl) Hin) as Hnin.
+        cbn in Hnin.
+        left; split; auto.
+      + cbn.
+        intros Hin.
+        pose proof (var_bound_not_free _ _ [v0] [v0] ltac:(apply incl_refl) Hin) as Hnin.
+        cbn in Hnin.
+        pose proof (var_free_incl (styp_subst v t t') [] [v0] ltac:(apply incl_nil_l)) as Hincl.
+        apply Hincl in Hin.
+        specialize (IHt Hin).
+        destruct IHt as [(IHt1 & IHt2) | IHt]; auto.
+        left; split; auto.
+        pose proof (var_free_or_bound v' t [] [v0] ltac:(apply incl_nil_l) IHt1) as Hbound.
+        destruct Hbound; [auto | tauto].
+  Qed.
+
+  (* If a variable does not appear free in a type, then substituion has no effect *)
+  Lemma styp_subst_no_free_ident :
+  forall v' t t', ~ In v' (fvar t) -> styp_subst v' t t' = t.
+  Proof.
+    intros v' t.
+    induction t; cbn [styp_subst]; auto; intros t'.
+    1,2: destruct (eqb_spec x v'); auto; cbn; tauto.
+    7,8: destruct (eqb_spec v v'); auto; cbn;
+         intros Hnin; rewrite IHt; auto;
+         intros Hin;
+         pose proof (var_free_or_bound v' t [] [v] ltac:(firstorder) Hin); firstorder.
+    5,6: intros Hnin; cbn; rewrite IHt; auto.
+    all: cbn; intros Hnin; rewrite in_app_iff in Hnin; specialize (IHt1 t'); specialize (IHt2 t').
+    all: rewrite IHt1; [rewrite IHt2|]; tauto.
+  Qed.
+
+  (* If s is the name of a free variable in t,
+     return the list of variables that would be captured if s is substituted with that variable.
+     Otherwise, return [].
+     l is the list of currently bound variables.
+   *)
+  Fixpoint styp_forbidden' (t : STyp) (s : pvn) (l : list pvn) :=
+  match t with
+  | STyp_Var x => if eqb x s then l else []
+  | STyp_VarDual x => if eqb x s then l else []
+  | STyp_Times t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
+  | STyp_Par t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
+  | STyp_Plus t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
+  | STyp_With t1 t2 => (styp_forbidden' t1 s l) ++ (styp_forbidden' t2 s l)
+  | STyp_Excl t => styp_forbidden' t s l
+  | STyp_Ques t => styp_forbidden' t s l
+  | STyp_Exists v t => if eqb v s then [] else styp_forbidden' t s (v :: l)
+  | STyp_Forall v t => if eqb v s then [] else styp_forbidden' t s (v :: l)
+  | STyp_One => []
+  | STyp_Bot => []
+  | STyp_Zero => []
+  | STyp_Top => []
+  end.
+
+  Lemma styp_forbidden_incl :
+  forall t v l l',
+  incl l l' ->
+  incl (styp_forbidden' t v l) (styp_forbidden' t v l').
+  Proof.
+    intros t v.
+    induction t.
+    1,2: cbn; destruct (eqb x v); auto; intros; apply incl_refl.
+    1,2,3,4: cbn; intros l l' Hincl x Hx; rewrite in_app_iff in Hx; specialize (IHt1 _ _ Hincl); specialize (IHt2 _ _ Hincl); rewrite in_app_iff; unfold incl in IHt1, IHt2; clear Hincl; firstorder.
+    1,2: cbn; auto.
+    3,4,5,6: cbn; intros; apply incl_refl.
+    all: cbn;
+         destruct (eqb_spec v0 v); [intros; apply incl_refl|];
+         intros l l' Hincl;
+         apply IHt;
+         clear IHt;
+         unfold incl; unfold incl in Hincl; firstorder.
+  Qed.
+
+  Lemma styp_forbidden_bound :
+  forall t v v' l,
+  In v (fvar t) ->
+  In v' l ->
+  In v' (styp_forbidden' t v l).
+  Proof.
+    intros t v v'.
+    induction t.
+    1,2: cbn; destruct (eqb_spec x v); [auto | tauto].
+    1,2,3,4: intros l; cbn;
+             repeat rewrite in_app_iff;
+             specialize (IHt1 l); specialize (IHt2 l);
+             tauto.
+    1,2: cbn; auto.
+    3,4,5,6: cbn; auto.
+    1,2: intros l; cbn;
+         intros Hin1 Hin2;
+         eapply var_bound_not_free in Hin1 as Hneq; try apply incl_refl;
+         cbn in Hneq;
+         destruct (eqb_spec v0 v); [tauto|];
+         specialize (IHt (v0 :: l));
+         eapply var_free_incl in Hin1; [| apply incl_nil_l];
+         apply (IHt ltac:(auto) ltac:(right; auto)).
+  Qed.
+
+  Lemma styp_forbidden_in :
+  forall t v v' l l',
+  incl l l' ->
+  In v' (styp_forbidden' t v l') -> In v' (styp_forbidden' t v l) \/ (In v (fvar t) /\ In v' l').
+  Proof.
+    intros t v v'.
+    induction t.
+    1,2: intros l l' Hincl; cbn;
+         destruct (eqb_spec x v); [subst v; auto | auto].
+    1,2,3,4: intros l l' Hincl; cbn;
+             repeat rewrite in_app_iff;
+             intros Hin;
+             destruct Hin as [Hin | Hin]; [specialize (IHt1 _ _ Hincl Hin); clear IHt2 | specialize (IHt2 _ _ Hincl Hin); clear IHt1];
+             tauto.
+    1,2: cbn; auto.
+    3,4,5,6: cbn; auto.
+    1,2: intros l l' Hincl; cbn;
+         destruct (eqb_spec v0 v); auto.
+    1,2: specialize (IHt (v0 :: l) (v0 :: l') ltac:(unfold incl; unfold incl in Hincl; clear IHt; firstorder));
+         intros Hin;
+         specialize (IHt Hin);
+         destruct IHt as [IHt | (IHt1 & IHt2)]; [auto|].
+    1,2: cbn in IHt2;
+         destruct IHt2 as [IHt2 | IHt2].
+    1,3: subst v'; left; apply styp_forbidden_bound; auto; left; auto.
+    1,2: right; split; auto;
+         pose proof (var_free_or_bound v t [] [v0] ltac:(apply incl_nil_l) IHt1) as Hfree;
+         cbn in Hfree; tauto.
+  Qed.
+
+  Lemma styp_forbidden_empty :
+  forall v t l,
+  ~ In v (fvar t) ->
+  styp_forbidden' t v l = [].
+  Proof.
+    intros v t l.
+    revert l; induction t.
+    1,2: cbn; destruct (eqb_spec x v); [subst v; tauto | tauto].
+    1,2,3,4,5,6,9,10,11,12: cbn; intros l; try rewrite in_app_iff; intros Hnin; try (rewrite (IHt1 l), (IHt2 l)); try (rewrite (IHt l)); auto.
+    1,2: cbn; intros l Hin;
+         destruct (eqb_spec v0 v); auto;
+         pose proof (var_free_or_bound v t [] [v0] ltac:(apply incl_nil_l)) as Hbound;
+         cbn in Hbound;
+         apply (IHt (v0 :: l) ltac:(intros Hin'; tauto)).
+  Qed.
+
+  Lemma styp_forbidden_dual :
+  forall t v l, styp_forbidden' t v l = styp_forbidden' (dual t) v l.
+  Proof.
+    intros t; induction t; cbn; auto.
+    1,2,3,4: intros v l; specialize (IHt1 v l); specialize (IHt2 v l); congruence.
+    1,2: intros v' l; specialize (IHt v' (v :: l)); rewrite IHt; auto.
+  Qed.
+
+  Lemma styp_forbidden_subst_no_free :
+  forall v v' t e l,
+  v' <> v ->
+  ~ In v (fvar e) ->
+  styp_forbidden' (styp_subst v' t e) v l = styp_forbidden' t v l.
+  Proof.
+    intros v v' t e l Hneq.
+    revert l.
+    induction t.
+    1,2: intros l; cbn; destruct (eqb_spec x v'); [subst v'; destruct (eqb_spec x v); try contradiction; try rewrite <- styp_forbidden_dual; try apply styp_forbidden_empty; auto | cbn; destruct (eqb_spec x v); auto].
+
+    1,2,3,4,5,6,9,10,11,12: cbn; intros l; intros Hnin; try (specialize (IHt1 l Hnin); specialize (IHt2 l Hnin)); try specialize (IHt l Hnin); congruence.
+
+    - cbn; intros l Hnin.
+      destruct (eqb_spec v0 v').
+      + subst v'.
+        destruct (eqb_spec v0 v); try contradiction.
+        cbn; destruct (eqb_spec v0 v); try contradiction; auto.
+      + destruct (eqb_spec v0 v).
+        * subst v; cbn; rewrite eqb_refl; auto.
+        * cbn; destruct (eqb_spec v0 v); try contradiction.
+          apply (IHt (v0 :: l) Hnin).
+
+    - cbn; intros l Hnin.
+      destruct (eqb_spec v0 v').
+      + subst v'.
+        destruct (eqb_spec v0 v); try contradiction.
+        cbn; destruct (eqb_spec v0 v); try contradiction; auto.
+      + destruct (eqb_spec v0 v).
+        * subst v; cbn; rewrite eqb_refl; auto.
+        * cbn; destruct (eqb_spec v0 v); try contradiction.
+          apply (IHt (v0 :: l) Hnin).
+  Qed.
+
+  Definition styp_forbidden (t : STyp) (s : pvn) := styp_forbidden' t s [].
+
+  (* If v can be replaced by v'' in t, and v' can be replaced by v'' in both t and t', then v' can be replaced by v'' in t{t'/v}. *)
+  Lemma styp_subst_forbidden (t : STyp) (v : pvn) (t' : STyp) (v' : pvn) (v'' : pvn) :
+  ~ In v'' (styp_forbidden t v) ->
+  ~ In v'' (styp_forbidden t v') ->
+  ~ In v'' (styp_forbidden t' v') ->
+  ~ In v'' (styp_forbidden (styp_subst v t t') v').
+  Proof.
+    induction t.
+    1: cbn; intros _ _;
+       destruct (eqb x v); [auto | cbn; destruct (eqb x v'); auto].
+    1: cbn; intros _ _;
+       destruct (eqb x v); [|cbn; destruct (eqb x v'); auto];
+       rewrite <- styp_forbidden_dual; auto.
+
+    1,2,3,4: cbn; intros Hnin1 Hnin2 Hnin3;
+             rewrite in_app_iff in Hnin1, Hnin2;
+             specialize (IHt1 ltac:(tauto) ltac:(tauto) Hnin3);
+             specialize (IHt2 ltac:(tauto) ltac:(tauto) Hnin3);
+             rewrite in_app_iff; tauto.
+
+    1,2: cbn; intros Hnin1 Hnin2 Hnin3;
+         specialize (IHt Hnin1 Hnin2 Hnin3); auto.
+
+    3,4,5,6: cbn; auto.
+
+    1,2: cbn; destruct (eqb_spec v0 v).
+    1,3: (* The variable getting replaced is v0. This has not effect *)
+         subst v; cbn; destruct (eqb_spec v0 v'); auto.
+    1,2: (* The variable getting replaced is not v0. *)
+         cbn; destruct (eqb_spec v0 v'); auto.
+    1,2: intros Hnin1 Hnin2 Hnin3;
+         pose proof (styp_forbidden_incl t v [] [v0] ltac:(unfold incl; contradiction)) as Hincl1;
+         pose proof (styp_forbidden_incl t v' [] [v0] ltac:(unfold incl; contradiction)) as Hincl2;
+         unfold incl in Hincl1, Hincl2;
+         specialize (IHt ltac:(intros Hin; apply Hnin1; auto) ltac:(intros Hin; apply Hnin2; auto) Hnin3);
+         intros Hin;
+         pose proof (styp_forbidden_in (styp_subst v t t') v' v'' [] [v0] ltac:(apply incl_nil_l) Hin) as Hin';
+         destruct Hin' as [Hin' | Hin']; [contradiction|];
+         cbn in Hin';
+         destruct Hin' as (_ & [Hin' | ?]); try contradiction;
+         subst v'';
+         assert (Hfree : ~ In v (fvar t)) by (intros Hfree; pose proof (styp_forbidden_bound t v v0 [v0] Hfree ltac:(left; auto)); contradiction);
+         rewrite styp_subst_no_free_ident in IHt, Hin; auto.
+  Qed.
+
+  Lemma styp_subst_distr1 :
+  forall v v' a b e,
+  v <> v' ->
+  Forall (fun v'' => ~ In v'' (styp_forbidden' b v' [v])) (fvar e) ->
+  Forall (fun v' => ~ In v' (styp_forbidden b v)) (fvar a) ->
+  styp_subst v (styp_subst v' b e) (styp_subst v' a e) = styp_subst v' (styp_subst v b a) e.
+  Proof.
+    intros v v' a b e Hneq.
+    induction b.
+
+    3,4,5,6,7,8,11,12,13,14:
+         cbn; intros Hnin1 Hnin2;
+         rewrite Forall_forall in Hnin1, Hnin2;
+         try (repeat rewrite Forall_forall in IHb1, IHb2;
+              specialize (IHb1 ltac:(intros x Hx; apply Hnin1 in Hx; rewrite in_app_iff in Hx; tauto) ltac:(intros x Hx; apply Hnin2 in Hx; rewrite in_app_iff in Hx; tauto));
+              specialize (IHb2 ltac:(intros x Hx; apply Hnin1 in Hx; rewrite in_app_iff in Hx; tauto) ltac:(intros x Hx; apply Hnin2 in Hx; rewrite in_app_iff in Hx; tauto))
+         );
+         try (repeat rewrite Forall_forall in IHb;
+              specialize (IHb ltac:(intros x Hx; apply Hnin1 in Hx; tauto) ltac:(intros x Hx; apply Hnin2 in Hx; tauto))
+         );
+         congruence.
+
+    - cbn.
+      destruct (eqb_spec x v').
+      + subst v'.
+        destruct (eqb_spec x v); [subst; contradiction |].
+        cbn; rewrite eqb_refl.
+        intros Hnin1 _.
+        rewrite Forall_forall in Hnin1.
+        rewrite styp_subst_no_free_ident; auto.
+        intros Hin; apply Hnin1 in Hin; tauto.
+
+      + destruct (eqb_spec x v).
+        * subst v.
+          cbn; rewrite eqb_refl; auto.
+        * cbn; destruct (eqb_spec x v); try contradiction.
+          destruct (eqb_spec x v'); try contradiction; auto.
+
+    - cbn.
+      destruct (eqb_spec x v').
+      + subst v'.
+        destruct (eqb_spec x v); [subst; contradiction |].
+        cbn; rewrite eqb_refl.
+        intros Hnin1 _.
+        rewrite styp_subst_no_free_ident; auto; unfold fvar; rewrite var_free_dual; rewrite dual_involute.
+        rewrite Forall_forall in Hnin1.
+        intros Hin; apply Hnin1 in Hin; tauto.
+
+      + destruct (eqb_spec x v).
+        * subst v.
+          cbn; rewrite eqb_refl.
+          rewrite styp_subst_dual; auto.
+        * cbn; destruct (eqb_spec x v); try contradiction.
+          destruct (eqb_spec x v'); try contradiction; auto.
+
+    - cbn.
+      destruct (eqb_spec v0 v').
+      + subst v'; cbn.
+        destruct (eqb_spec v0 v).
+        1: subst v; contradiction.
+        cbn; rewrite eqb_refl.
+        intros _ Hnin2; clear IHb.
+
+        destruct (in_dec eq_dec v (fvar b)).
+        * rewrite (styp_subst_no_free_ident v0); auto.
+          rewrite Forall_forall in Hnin2.
+          intros Hin; apply Hnin2 in Hin; apply Hin.
+          apply styp_forbidden_bound; auto; left; auto.
+        * do 2 (rewrite styp_subst_no_free_ident; auto).
+
+      + destruct (eqb_spec v0 v).
+        * subst v; intros _; cbn.
+          rewrite eqb_refl.
+          destruct (eqb_spec v0 v'); try contradiction.
+          auto.
+        * intros Hnin1 Hnin2.
+          rewrite Forall_forall in Hnin1, Hnin2.
+          cbn; destruct (eqb_spec v0 v); try contradiction.
+          destruct (eqb_spec v0 v'); try contradiction.
+          rewrite IHb; auto.
+          all: unfold styp_forbidden.
+          all: match goal with |- context[styp_forbidden' ?b ?v ?l] =>
+                 rewrite Forall_forall; intros x Hx;
+                 try specialize (Hnin1 _ Hx);
+                 try specialize (Hnin2 _ Hx);
+                 pose proof (styp_forbidden_incl b v l (v0 :: l) ltac:(apply incl_tl; apply incl_refl));
+                 auto
+               end.
+
+    - cbn.
+      destruct (eqb_spec v0 v').
+      + subst v'; cbn.
+        destruct (eqb_spec v0 v).
+        1: subst v; contradiction.
+        cbn; rewrite eqb_refl.
+        intros _ Hnin2; clear IHb.
+
+        destruct (in_dec eq_dec v (fvar b)).
+        * rewrite (styp_subst_no_free_ident v0); auto.
+          rewrite Forall_forall in Hnin2.
+          intros Hin; apply Hnin2 in Hin; apply Hin.
+          apply styp_forbidden_bound; auto; left; auto.
+        * do 2 (rewrite styp_subst_no_free_ident; auto).
+
+      + destruct (eqb_spec v0 v).
+        * subst v; intros _; cbn.
+          rewrite eqb_refl.
+          destruct (eqb_spec v0 v'); try contradiction.
+          auto.
+        * intros Hnin1 Hnin2.
+          rewrite Forall_forall in Hnin1, Hnin2.
+          cbn; destruct (eqb_spec v0 v); try contradiction.
+          destruct (eqb_spec v0 v'); try contradiction.
+          rewrite IHb; auto.
+          all: unfold styp_forbidden.
+          all: match goal with |- context[styp_forbidden' ?b ?v ?l] =>
+                 rewrite Forall_forall; intros x Hx;
+                 try specialize (Hnin1 _ Hx);
+                 try specialize (Hnin2 _ Hx);
+                 pose proof (styp_forbidden_incl b v l (v0 :: l) ltac:(apply incl_tl; apply incl_refl));
+                 auto
+               end.
+  Qed.
+
+  Lemma styp_subst_distr2 :
+  forall v a b e,
+  styp_subst v b (styp_subst v a e) = styp_subst v (styp_subst v b a) e.
+  Proof.
+    intros v a b e.
+    induction b.
+
+    3,4,5,6,7,8,11,12,13,14: cbn; congruence.
+
+    - cbn; destruct (eqb_spec x v); auto.
+      cbn; destruct (eqb_spec x v); try contradiction; auto.
+
+    - cbn; destruct (eqb_spec x v).
+      + subst x.
+        rewrite styp_subst_dual; auto.
+      + cbn.
+        destruct (eqb_spec x v); try contradiction; auto.
+
+    - cbn.
+      destruct (eqb_spec v0 v).
+      + subst v.
+        cbn; rewrite eqb_refl; auto.
+      + rewrite IHb; cbn.
+        destruct (eqb_spec v0 v); try contradiction; auto.
+
+    - cbn.
+      destruct (eqb_spec v0 v).
+      + subst v.
+        cbn; rewrite eqb_refl; auto.
+      + rewrite IHb; cbn.
+        destruct (eqb_spec v0 v); try contradiction; auto.
+  Qed.
+
+  End STyp.
+
+  Section Process.
+  Definition chn_eqb := fun x y => if ChannelName.eq_dec x y then true else false.
+  Definition chn_eq_dec := ChannelName.eq_dec.
+  Definition chn_eqb_spec x y : reflect (x = y) (chn_eqb x y).
+  Proof. unfold chn_eqb; destruct (ChannelName.eq_dec x y); constructor; auto. Qed.
+  Definition chn_eqb_refl x : chn_eqb x x = true.
+  Proof. unfold chn_eqb; destruct (ChannelName.eq_dec x x); auto. Qed.
+  Definition chn_eqb_neq x y : chn_eqb x y = false <-> x <> y.
+  Proof. destruct (chn_eqb_spec x y); split; try contradiction; try discriminate; auto. Qed.
+
+  #[local] Notation eqb := chn_eqb.
+  #[local] Notation eq_dec := chn_eq_dec.
+  #[local] Notation eqb_spec := chn_eqb_spec.
+  #[local] Notation eqb_refl := chn_eqb_refl.
+  #[local] Notation eqb_neq := chn_eqb_neq.
+
+  Lemma chn_negb_eqb_true_iff : forall x y, negb (eqb x y) = true <-> x <> y.
+  Proof.
+    intros x y; rewrite Bool.negb_true_iff.
+    destruct (eqb_spec x y); split; intros.
+    all: try contradiction; try discriminate; auto.
+  Qed.
+
+  #[local] Notation negb_eqb_true_iff := chn_negb_eqb_true_iff.
+
+  (* An environment is a list of (channel_name, type) pairs *)
+  Definition SEnv := list (chn * STyp).
+
+  (* An environment is valid, if it does not type the same channel twice. *)
+  Definition senv_valid (senv : SEnv) : Prop := NoDup (map fst senv).
+
+  Lemma senv_valid_cons x a senv : senv_valid ((x, a) :: senv) <-> ~ In x (map fst senv) /\ senv_valid senv.
+  Proof.
+    unfold senv_valid; cbn; rewrite NoDup_cons_iff.
+    split; auto.
+  Qed.
+
+  Lemma senv_tail_valid x (senv : SEnv) : senv_valid (x :: senv) -> senv_valid senv.
+  Proof.
+    destruct x; rewrite senv_valid_cons; tauto.
+  Qed.
+
+  (* Two environments are disjoint if their channel names are disjoint *)
+  Definition senv_disjoint (senv1 senv2: SEnv) : Prop := forall m, In m (map fst senv1) -> ~ In m (map fst senv2).
+
+  Lemma senv_disjoint_app_valid : forall senv1 senv2,
+  senv_valid senv1 ->
+  senv_valid senv2 ->
+  senv_disjoint senv1 senv2 ->
+  senv_valid (senv1 ++ senv2).
+  Proof.
+    intros senv1 senv2 Hv1 Hv2 Hdj.
+    unfold senv_disjoint in Hdj.
+    unfold senv_valid.
+    rewrite map_app.
+    apply NoDup_app; auto.
+  Qed.
+
+  (* Compared to Wadler's paper, the main difference here is the addition of Proc_ClientNull and Proc_ClientSplit.
+     This is due to syntactical difficulties around implementing channel renaming.
+
+     For example, consider the following derivation rule:
+        P |- Gamma, y : A     Q |- Delta, x : B
+     ---------------------------------------------
+     x[y].(P | Q) |- Gamma, Delta, x : A \otimes B
+
+     In this derivation, the channel name y appears in process P, but not in the composed process.
+     If we only look at the composed environment, we could get the impression that a channel in Gamma (say, z) could be renamed into y.
+     However this is incorrect, as renaming z into y would cause P to become invalid (due to channel name clashing).
+
+     To implement channel renaming correctly, we need to keep track of the names of all channels a process may provide.
+     The system presented in Wadler's paper does not support this feature: the Weaken rule adds a channel but does not mark it in the process.
+     We thus had to add ClientNull and ClientSplit to explicitly keep track of channel names that are added and deleted.
+   *)
+  Inductive Process :=
+  | Proc_Link (x : chn) (y : chn)
+  | Proc_Comp (x : chn) (a : STyp) (p : Process) (q : Process)
+  | Proc_OutCh (x : chn) (y : chn) (p : Process) (q : Process)
+  | Proc_InCh (x : chn) (y : chn) (p : Process)
+  | Proc_OutLeft (x : chn) (p : Process)
+  | Proc_OutRight (x : chn) (p : Process)
+  | Proc_InCase (x : chn) (p : Process) (q : Process)
+  | Proc_Server (x : chn) (y : chn) (p : Process)
+  | Proc_Client (x : chn) (y : chn) (p : Process)
+  | Proc_ClientNull (x : chn) (p : Process)
+  | Proc_ClientSplit (x : chn) (y : chn) (p : Process)
+  | Proc_OutTyp (x : chn) (a : STyp) (v : pvn) (t : STyp) (p : Process)
+  | Proc_InTyp (x : chn) (v : pvn) (p : Process)
+  | Proc_OutUnit (x : chn)
+  | Proc_InUnit (x : chn) (p : Process)
+  | Proc_EmptyCase (x : chn) (l : list chn).
+
+  (* List of names of channels provided by a process *)
+  Fixpoint proc_channels (p : Process) :=
+  match p with
+  | Proc_Link x y => [x; y]
+  | Proc_Comp x a p q => filter (fun s => negb (eqb x s)) ((proc_channels p) ++ (proc_channels q))
+  | Proc_OutCh x y p q => filter (fun s => negb (eqb y s)) (proc_channels p) ++ (proc_channels q)
+  | Proc_InCh x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_OutLeft x p => proc_channels p
+  | Proc_OutRight x p => proc_channels p
+  | Proc_InCase x p q => proc_channels p
+  | Proc_Server x y p => x :: filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_Client x y p => x :: filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_ClientNull x p => x :: (proc_channels p)
+  | Proc_ClientSplit x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_OutTyp x a _ _ p => proc_channels p
+  | Proc_InTyp x v p => proc_channels p
+  | Proc_OutUnit x => [x]
+  | Proc_InUnit x p => x :: proc_channels p
+  | Proc_EmptyCase x l => x :: l
+  end.
+
+  (* If s is the name of a channel provided by process p, returns the list of names that s must not be renamed into *)
+  (* Otherwise, return [] *)
+  Fixpoint proc_forbidden (p : Process) (s : chn) :=
+  match p with
+  | Proc_Link x y => if eqb x s then [y] else if eqb y s then [x] else []
+  | Proc_Comp x a p q =>
+      let gamma := filter (fun s => negb (eqb x s)) (proc_channels p) in
+      let delta := filter (fun s => negb (eqb x s)) (proc_channels q) in
+      if eqb x s then [] else if in_dec eq_dec s gamma then (proc_forbidden p s) ++ delta else if in_dec eq_dec s delta then (proc_forbidden q s) ++ gamma else []
+  | Proc_OutCh x y p q =>
+      let gamma := filter (fun s => negb (eqb y s)) (proc_channels p) in
+      let delta := filter (fun s => negb (eqb x s)) (proc_channels q) in
+      if eqb x s then gamma ++ (proc_forbidden q s) else if in_dec eq_dec s gamma then  x :: (proc_forbidden p s) ++ delta else if in_dec eq_dec s delta then (proc_forbidden q s) ++ gamma else []
+  | Proc_InCh x y p => if eqb y s then [] else proc_forbidden p s
+  | Proc_OutLeft x p => proc_forbidden p s
+  | Proc_OutRight x p => proc_forbidden p s
+  | Proc_InCase x p q => proc_forbidden p s ++ proc_forbidden q s
+  | Proc_Server x y p =>
+      let gamma := filter (fun s => negb (eqb y s)) (proc_channels p) in
+      if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
+  | Proc_Client x y p =>
+      let gamma := filter (fun s => negb (eqb y s)) (proc_channels p) in
+      if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
+  | Proc_ClientNull x p =>
+      let gamma := proc_channels p in
+      if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
+  | Proc_ClientSplit x y p => if eqb y s then [] else proc_forbidden p s
+  | Proc_OutTyp x a _ _ p => proc_forbidden p s
+  | Proc_InTyp x v p => proc_forbidden p s
+  | Proc_OutUnit x => []
+  | Proc_InUnit x p =>
+      let gamma := proc_channels p in
+      if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
+  | Proc_EmptyCase x l =>
+      if in_dec eq_dec s (x :: l) then filter (fun t => negb (eqb s t)) (x :: l) else []
+  end.
+
+  Inductive cp : Process -> SEnv -> Prop :=
+  | cp_ax :
+    forall w x a, ~ w = x -> cp (Proc_Link w x) [(w, dual a); (x, a)]
+  | cp_cut :
+    forall x a p q gamma delta,
+      senv_disjoint gamma delta ->
+      cp p ((x, a) :: gamma) ->
+      cp q ((x, dual a) :: delta) ->
+      cp (Proc_Comp x a p q) (gamma ++ delta)
+  | cp_times :
+    forall x y a b p q gamma delta,
+      ~ In x (map fst gamma) ->
+      senv_disjoint gamma delta ->
+      cp p ((y, a) :: gamma) ->
+      cp q ((x, b) :: delta) ->
+      cp (Proc_OutCh x y p q) ((x, STyp_Times a b) :: gamma ++ delta)
+  | cp_par :
+    forall x y a b p gamma,
+      cp p ((x, b) :: (y, a) :: gamma) ->
+      cp (Proc_InCh x y p) ((x, STyp_Par a b) :: gamma)
+  | cp_plus_left :
+    forall x a b p gamma,
+      cp p ((x, a) :: gamma) ->
+      cp (Proc_OutLeft x p) ((x, STyp_Plus a b) :: gamma)
+  | cp_plus_right :
+    forall x a b p gamma,
+      cp p ((x, b) :: gamma) ->
+      cp (Proc_OutRight x p) ((x, STyp_Plus a b) :: gamma)
+  | cp_with :
+    forall x a b p q gamma,
+      cp p ((x, a) :: gamma) ->
+      cp q ((x, b) :: gamma) ->
+      cp (Proc_InCase x p q) ((x, STyp_With a b) :: gamma)
+  | cp_excl :
+    forall x y a p gamma,
+      Forall (fun r => match r with STyp_Ques _ => True | _ => False end) (map snd gamma) ->
+      ~ In x (map fst gamma) ->
+      cp p ((y, a) :: gamma) ->
+      cp (Proc_Server x y p) ((x, STyp_Excl a) :: gamma)
+  | cp_ques :
+    forall x y a p gamma,
+      ~ In x (map fst gamma) ->
+      cp p ((y, a) :: gamma) ->
+      cp (Proc_Client x y p) ((x, STyp_Ques a) :: gamma)
+  | cp_weaken :
+    forall x a p gamma,
+      ~ In x (map fst gamma) ->
+      cp p gamma ->
+      cp (Proc_ClientNull x p) ((x, STyp_Ques a) :: gamma)
+  | cp_contract :
+    forall x y a p gamma,
+      cp p ((x, STyp_Ques a) :: (y, STyp_Ques a) :: gamma) ->
+      cp (Proc_ClientSplit x y p) ((x, STyp_Ques a) :: gamma)
+  | cp_exists :
+    forall x v a b p gamma,
+      Forall (fun v' => ~ In v' (styp_forbidden b v)) (fvar a) ->
+      cp p ((x, styp_subst v b a) :: gamma) ->
+      cp (Proc_OutTyp x a v b p) ((x, STyp_Exists v b) :: gamma)
+  | cp_forall :
+    forall x v a p gamma,
+      Forall (fun r => ~ In v (fvar r)) (map snd gamma) ->
+      cp p ((x, a) :: gamma) ->
+      cp (Proc_InTyp x v p) ((x, STyp_Forall v a) :: gamma)
+  | cp_one : forall x, cp (Proc_OutUnit x) [(x, STyp_One)]
+  | cp_bot :
+    forall x p gamma,
+      ~ In x (map fst gamma) ->
+      cp p gamma ->
+      cp (Proc_InUnit x p) ((x, STyp_Bot) :: gamma)
+  | cp_top :
+    forall x gamma,
+      ~ In x (map fst gamma) ->
+      senv_valid gamma ->
+      cp (Proc_EmptyCase x (map fst gamma)) ((x, STyp_Top) :: gamma)
+  | cp_perm :
+    forall p gamma gamma',
+      cp p gamma ->
+      Permutation gamma gamma' ->
+      cp p gamma'.
+
+  (* If cp p gamma holds, then gamma is a valid environment *)
+  Lemma cp_senv_valid :
+  forall p senv,
+  cp p senv ->
+  senv_valid senv.
+  Proof.
+    intros p senv Hcp.
+    induction Hcp.
+    - unfold senv_valid; cbn; constructor; [firstorder | constructor; auto; constructor].
+    - apply senv_disjoint_app_valid; auto; eapply NoDup_cons_inv; eauto.
+    - rewrite senv_valid_cons.
+      rewrite senv_valid_cons in IHHcp1, IHHcp2.
+      split.
+      2: apply senv_disjoint_app_valid; tauto.
+      rewrite map_app; rewrite in_app_iff; tauto.
+    - rewrite senv_valid_cons in IHHcp; cbn in IHHcp.
+      rewrite senv_valid_cons in IHHcp.
+      rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
+    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
+    - rewrite senv_valid_cons in IHHcp1; rewrite senv_valid_cons; auto.
+    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons in IHHcp; cbn in IHHcp.
+      rewrite senv_valid_cons in IHHcp.
+      rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
+    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
+    - cbn; constructor; auto; constructor.
+    - rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons; tauto.
+    - unfold senv_valid; eapply Permutation_NoDup.
+      1: eapply Permutation_map; apply H.
+      apply IHHcp.
+  Qed.
+
+  (* If cp p gamma holds, then the names of channels in gamma are exactly those returned by proc_channels *)
+  Lemma cp_channels :
+  forall p senv x',
+  cp p senv ->
+  In x' (map fst senv) <-> In x' (proc_channels p).
+  Proof.
+    intros p senv x Hcp.
+    revert x.
+    induction Hcp.
+    - (* Link w x *)
+      cbn; intros; split; auto.
+
+    - (* Comp x a p q *)
+      intros x'; cbn.
+
+      rewrite map_app.
+      rewrite filter_In.
+      repeat rewrite in_app_iff.
+      rewrite negb_eqb_true_iff.
+      rewrite <- IHHcp1, <- IHHcp2; cbn.
+
+      apply cp_senv_valid in Hcp1, Hcp2.
+      rewrite senv_valid_cons in Hcp1, Hcp2.
+
+      split; [|tauto].
+      intros Hin; split; [tauto|].
+      intros Heq; subst x'; tauto.
+
+    - (* OutCh x y p q *)
+      intros x'; cbn.
+
+      rewrite map_app.
+      repeat rewrite in_app_iff.
+      rewrite filter_In.
+      rewrite negb_eqb_true_iff.
+      rewrite <- IHHcp1, <- IHHcp2; cbn.
+
+      apply cp_senv_valid in Hcp1.
+      rewrite senv_valid_cons in Hcp1.
+
+      split; [|tauto].
+      intros Hin.
+      destruct Hin as [Hin | [Hin | Hin]]; [tauto | | tauto].
+      left; split; auto.
+      intros Heq; subst x'; tauto.
+
+    - (* Proc_InCh x y p *)
+      intros x'; cbn.
+
+      rewrite filter_In.
+      rewrite <- IHHcp.
+      rewrite negb_eqb_true_iff; cbn.
+
+      apply cp_senv_valid in Hcp.
+      repeat rewrite senv_valid_cons in Hcp; cbn in Hcp.
+
+      split; [|tauto].
+      intros Hin.
+      split; [tauto|].
+      intros Heq; subst x'.
+      firstorder.
+
+    - (* Proc_OutLeft x p *)
+      cbn; intros x'; rewrite <- IHHcp; cbn; split; auto.
+    - (* Proc_OutRight x p *)
+      cbn; intros x'; rewrite <- IHHcp; cbn; split; auto.
+    - (* Proc_InCase x p q *)
+      cbn; intros x'; rewrite <- IHHcp1; cbn; split; auto.
+
+    - (* Proc_Server x y p *)
+      intros x'; cbn.
+
+      rewrite filter_In.
+      rewrite <- IHHcp.
+      rewrite negb_eqb_true_iff; cbn.
+
+      apply cp_senv_valid in Hcp.
+      rewrite senv_valid_cons in Hcp.
+
+      split; [|tauto].
+      intros Hin.
+      destruct Hin as [Hin | Hin].
+      1: left; auto.
+      right; split; auto.
+      intros Heq; subst x'; tauto.
+
+    - (* Proc_Client x y p *)
+      intros x'; cbn.
+
+      rewrite filter_In.
+      rewrite <- IHHcp.
+      rewrite negb_eqb_true_iff; cbn.
+
+      apply cp_senv_valid in Hcp.
+      rewrite senv_valid_cons in Hcp.
+
+      split; [|tauto].
+      intros Hin.
+      destruct Hin as [Hin | Hin].
+      1: left; auto.
+      right; split; auto.
+      intros Heq; subst x'; tauto.
+
+    - (* Proc_ClientNull x p *)
+      cbn; intros x'; rewrite <- IHHcp; split; auto.
+
+    - (* Proc_ClientSplit x y p *)
+      intros x'; cbn.
+
+      rewrite filter_In.
+      rewrite <- IHHcp.
+      rewrite negb_eqb_true_iff; cbn.
+
+      (* y not in gamma *)
+      apply cp_senv_valid in Hcp.
+      repeat rewrite senv_valid_cons in Hcp; cbn in Hcp.
+
+      split; [|tauto].
+      intros Hin.
+      split; [tauto|].
+      intros Heq; subst x'.
+      firstorder.
+
+    - (* Proc_OutTyp x a p *)
+      cbn; intros x'; rewrite <- IHHcp; cbn; split; auto.
+    - (* Proc_InTyp x v p *)
+      cbn; intros x'; rewrite <- IHHcp; cbn; split; auto.
+    - (* Proc_OutUnit x *)
+      cbn; intros; split; auto.
+    - (* Proc_InUnit x p *)
+      cbn; intros x'; rewrite <- IHHcp; split; auto.
+    - (* Proc_EmptyCase x gamma *)
+      cbn; split; auto.
+
+    - (* Permutation *)
+      intros x'; rewrite <- IHHcp.
+      rewrite <- H.
+      tauto.
+  Qed.
+
+  (* If s is not a channel of p, then proc_forbidden returns [].
+     This lemma is used to reason about the correctness of proc_rename.
+     When proc_rename encounters a process composed of two subprocesses, it does not know which process provided the given channel.
+     Of course we can inspect the structure of two processes to get this information, but that would too costly.
+     Instead, we simply perform renaming on both subprocesses.
+     To prove that this is correct (i.e. not resulting in name clashing), we need to show that renaming a nonexistent channel is not forbidden. 
+   *)
+  Lemma proc_forbidden_empty :
+  forall p gamma s,
+  cp p gamma ->
+  ~ In s (map fst gamma) ->
+  proc_forbidden p s = [].
+  Proof.
+    intros p gamma s Hcp.
+    revert s.
+    induction Hcp.
+    - (* Proc_Link w x *)
+      cbn; intros s Hin.
+      destruct (eqb_spec w s).
+      1: tauto.
+      destruct (eqb_spec x s).
+      1: tauto.
+      auto.
+
+    - (* Proc_Comp x a p q *)
+      cbn; intros s Hin.
+      rewrite map_app, in_app_iff in Hin.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s); auto.
+
+      (* Case 2: s in gamma *)
+      match goal with |- context[if ?p then _ else _] => destruct p end.
+      + (* s in gamma *)
+        rewrite filter_In in i; destruct i as (i & _).
+        rewrite <- (cp_channels _ _ _ Hcp1) in i.
+        cbn in i.
+        destruct i as [? | i]; [contradiction|].
+
+        tauto.
+
+      + (* Case 3: s in delta *)
+        match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+        (* s in delta *)
+        rewrite filter_In in i; destruct i as (i & _).
+        rewrite <- (cp_channels _ _ _ Hcp2) in i.
+        cbn in i.
+        destruct i as [? | i]; [contradiction|].
+
+        tauto.
+
+    - (* Proc_OutCh x y p q *)
+      cbn; intros s Hin.
+      rewrite map_app, in_app_iff in Hin.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      1: subst s; tauto.
+
+      (* Case 2: s in gamma *)
+      match goal with |- context[if ?p then _ else _] => destruct p end.
+      + (* s in gamma *)
+        rewrite filter_In in i.
+        rewrite negb_eqb_true_iff in i.
+        rewrite <- (cp_channels _ _ _ Hcp1) in i.
+        cbn in i.
+
+        tauto.
+
+      + clear n0.
+        (* Case 3: s in delta *)
+        match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+        (* s in delta *)
+        rewrite filter_In in i.
+        rewrite negb_eqb_true_iff in i.
+        rewrite <- (cp_channels _ _ _ Hcp2) in i.
+        cbn in i.
+
+        tauto.
+
+    - (* Proc_InCh x y p *)
+      cbn; intros s Hin.
+      destruct (eqb_spec y s); auto.
+      apply IHHcp; cbn; tauto.
+
+    - (* Proc_OutLeft x p *)
+      cbn; apply IHHcp.
+    - (* Proc OutRight x p *)
+      cbn; apply IHHcp.
+    - (* Proc_InCase x p q *)
+      cbn; intros s Hin.
+      cbn in IHHcp1, IHHcp2.
+      rewrite IHHcp1, IHHcp2; auto.
+
+    - (* Proc_Server x y p *)
+      cbn; intros s Hin.
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s); [tauto|].
+
+      (* Case 2: s in gamma *)
+      match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+      (* s in gamma *)
+      rewrite filter_In in i.
+      rewrite <- (cp_channels _ _ _ Hcp) in i.
+      rewrite negb_eqb_true_iff in i.
+      cbn in i.
+
+      (* y not in gamma *)
+      apply cp_senv_valid in Hcp.
+      rewrite senv_valid_cons in Hcp.
+
+      destruct i as ([i | i] & Hneq); [|tauto].
+      contradiction.
+
+    - (* Proc_Client x y p *)
+      cbn; intros s Hin.
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s); [tauto|].
+
+      (* Case 2: s in gamma *)
+      match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+      (* s in gamma *)
+      rewrite filter_In in i.
+      rewrite <- (cp_channels _ _ _ Hcp) in i.
+      rewrite negb_eqb_true_iff in i.
+      cbn in i.
+
+      (* y not in gamma *)
+      apply cp_senv_valid in Hcp.
+      rewrite senv_valid_cons in Hcp.
+
+      destruct i as ([i | i] & Hneq); [|tauto].
+      contradiction.
+
+    - (* Proc_ClientNull x p *)
+      cbn; intros s Hin.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s); [tauto|].
+
+      (* Case 2: s in gamma *)
+      match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+      rewrite <- (cp_channels _ _ _ Hcp) in i.
+      tauto.
+
+    - (* Proc_ClientSplit x y p *)
+      cbn; intros s Hin.
+
+      (* Case 1: s = y *)
+      destruct (eqb_spec y s); auto.
+
+      (* Hin assumes s <> x and s not in gamma, thus apply IH directly *)
+      apply IHHcp; cbn; tauto.
+
+    - (* Proc_OutTyp x a p *)
+      cbn; apply IHHcp.
+    - (* Proc_InTyp x v p *)
+      cbn; apply IHHcp.
+    - (* Proc_OutUnit x *)
+      cbn; auto.
+
+    - (* Proc_InUnit *)
+      cbn; intros s Hin.
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s); [tauto|].
+
+      (* Case 2: s in gamma *)
+      match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+      rewrite <- (cp_channels _ _ _ Hcp) in i.
+      tauto.
+
+    - (* Proc_EmptyCase x gamma *)
+      cbn [map fst].
+      unfold proc_forbidden.
+      intros s Hin.
+      match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+      contradiction.
+
+    - (* Permutation *)
+      intros s Hin; apply IHHcp.
+      intros Hin'; apply Hin.
+      rewrite <- H; auto.
+  Qed.
+
+  (* Channels provided by the same process are forbidden *)
+  Lemma proc_forbidden_channel :
+  forall p gamma s t,
+  cp p gamma ->
+  In s (map fst gamma) ->
+  In t (map fst gamma) ->
+  s <> t ->
+  In t (proc_forbidden p s).
+  Proof.
+    intros p gamma s t Hcp.
+    revert s t.
+    induction Hcp.
+    - (* Proc_Link *)
+      cbn; intros s t.
+      (* Case 1: s = w *)
+      destruct (eqb_spec w s).
+      + subst s; intros _ Hin Hin'.
+        cbn; tauto.
+
+      + (* Case 2: s = x *)
+        destruct (eqb_spec x s).
+        * subst s; intros _ Hin Hin'.
+          cbn; tauto.
+
+        * (* Case 3: otherwise *)
+          cbn; tauto.
+
+    - (* Proc_Comp *)
+      cbn; intros s t.
+      (* x not in gamma, delta *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        (* senv_valid *)
+        apply cp_senv_valid in Hcp1, Hcp2.
+        rewrite senv_valid_cons in Hcp1, Hcp2.
+
+        (* Simplify goal *)
+        rewrite map_app; rewrite in_app_iff; cbn.
+        tauto.
+
+      + (* Case 2: s in gamma *)
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        * (* s in gamma *)
+          rewrite filter_In in i.
+          rewrite negb_eqb_true_iff in i.
+          rewrite <- (cp_channels _ _ _ Hcp1) in i.
+          cbn in i.
+          assert (i' : In s (map fst gamma)) by tauto.
+          intros _.
+
+          (* Apply this fact to IHHcp1 *)
+          specialize (IHHcp1 s t ltac:(cbn; right; auto)).
+
+          (* Simplify goal *)
+          rewrite map_app.
+          repeat rewrite in_app_iff.
+          rewrite filter_In.
+          rewrite negb_eqb_true_iff.
+          rewrite <- (cp_channels _ _ _ Hcp2); cbn.
+
+          (* If t in gamma then it is covered by IHHcp1, otherwise t in delta and it is covered by proc_channels *)
+          intros Hin Hneq.
+          destruct Hin as [Hin | Hin].
+          -- specialize (IHHcp1 ltac:(cbn; right; auto) Hneq); auto.
+          -- right; split; auto.
+             intros Heq; subst t; tauto.
+
+        * (* s not in gamma *)
+          rewrite filter_In in n0.
+          rewrite negb_eqb_true_iff in n0.
+          rewrite <- (cp_channels _ _ _ Hcp1) in n0.
+          cbn in n0.
+          assert (n0' : ~ In s (map fst gamma)) by tauto.
+
+          (* Case 3: s in delta *)
+          match goal with |- context[if ?p then _ else _] => destruct p end.
+          -- (* s in delta *)
+             rewrite filter_In in i.
+             rewrite negb_eqb_true_iff in i.
+             rewrite <- (cp_channels _ _ _ Hcp2) in i.
+             cbn in i.
+             assert (i' : In s (map fst delta)) by tauto.
+             intros _.
+
+             (* Apply this fact to IHHcp2 *)
+             specialize (IHHcp2 s t ltac:(cbn; right; auto)).
+
+             (* Simplify goal *)
+             rewrite map_app.
+             repeat rewrite in_app_iff.
+             rewrite filter_In.
+             rewrite negb_eqb_true_iff.
+             rewrite <- (cp_channels _ _ _ Hcp1); cbn.
+
+             (* Symmetric to the case above *)
+             intros Hin Hneq.
+             destruct Hin as [Hin | Hin].
+             ++ right; split; auto.
+                intros Heq; subst t; tauto.
+             ++ specialize (IHHcp2 ltac:(cbn; right; auto) Hneq); auto.
+
+          -- (* Case 4: s not in gamma, delta *)
+             rewrite filter_In in n1.
+             rewrite negb_eqb_true_iff in n1.
+             rewrite <- (cp_channels _ _ _ Hcp2) in n1.
+             cbn in n1.
+
+             rewrite map_app, in_app_iff.
+             tauto.
+
+    - (* Proc_OutCh *)
+      cbn; intros s t.
+      (* y not in gamma, x not in delta *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s; intros _.
+
+        (* Simplify goal *)
+        rewrite map_app.
+        repeat rewrite in_app_iff.
+        rewrite filter_In.
+        rewrite negb_eqb_true_iff.
+        rewrite <- (cp_channels _ _ _ Hcp1); cbn.
+
+        (* Simplify IHHcp2 *)
+        specialize (IHHcp2 x t ltac:(cbn; left; auto)).
+
+        (* Since s <> t, either t in gamma or t in delta *)
+        intros Hin Hneq.
+        destruct Hin as [? | Hin]; [contradiction|].
+        destruct Hin as [Hin | Hin].
+        -- left; split; auto.
+           intros Heq; subst t; tauto.
+        -- right.
+           apply (IHHcp2 ltac:(cbn; right; auto) Hneq).
+
+      + intros Hin; destruct Hin as [? | Hin]; [contradiction|].
+        rewrite map_app, in_app_iff in Hin.
+        (* Case 2: s in gamma *)
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        * clear Hin.
+          (* s in gamma *)
+          rewrite filter_In in i.
+          rewrite negb_eqb_true_iff in i.
+          rewrite <- (cp_channels _ _ _ Hcp1) in i; cbn in i.
+          assert (i' : In s (map fst gamma)) by tauto.
+
+          (* Simplify goal *)
+          cbn.
+          rewrite map_app.
+          repeat rewrite in_app_iff.
+          rewrite filter_In.
+          rewrite negb_eqb_true_iff.
+          rewrite <- (cp_channels _ _ _ Hcp2); cbn.
+
+          (* Simplify IHHcp1 *)
+          specialize (IHHcp1 s t ltac:(cbn; right; auto)).
+
+          intros Hin Hneq.
+          destruct Hin as [Hin | [Hin | Hin]].
+          -- auto.
+          -- right; left; apply (IHHcp1 ltac:(cbn; right; auto) Hneq).
+          -- right; right; split; auto.
+             intros Heq; subst t; tauto.
+
+        * (* Case 3: s not in gamma, but Hin assumes s in gamma or delta, so s in delta *)
+          rewrite filter_In in n0.
+          rewrite <- (cp_channels _ _ _ Hcp1) in n0.
+          cbn in n0.
+          rewrite negb_eqb_true_iff in n0.
+          assert (n0' : ~ In s (map fst gamma)) by (revert n0; apply list_nin_helper; tauto).
+          destruct Hin as [Hin | Hin]; [contradiction|].
+
+          match goal with |- context[if ?p then _ else _] => destruct p end.
+          2: { rewrite filter_In, negb_eqb_true_iff in n1.
+               rewrite <- (cp_channels _ _ _ Hcp2) in n1.
+               cbn in n1; tauto.
+          }
+
+          (* Simplify goal *)
+          clear i.
+          rewrite map_app.
+          repeat rewrite in_app_iff.
+          rewrite filter_In.
+          rewrite negb_eqb_true_iff.
+          rewrite <- (cp_channels _ _ _ Hcp1); cbn.
+
+          (* Simplify IHHcp2 *)
+          specialize (IHHcp2 s t ltac:(cbn; right; auto)).
+
+          intros Hin' Hneq.
+          destruct Hin' as [Hin' | [Hin' | Hin']].
+          -- subst t.
+             specialize (IHHcp2 ltac:(cbn; left; auto) Hneq).
+             auto.
+          -- right; split; auto.
+             intros Heq; subst t; tauto.
+          -- specialize (IHHcp2 ltac:(cbn; right; auto) Hneq).
+             auto.
+
+    - (* Proc_InCh *)
+      cbn; intros s t.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      repeat rewrite senv_valid_cons in Hcp'.
+      cbn in Hcp'.
+
+      (* Case 1: s = y *)
+      destruct (eqb_spec y s).
+      + subst s.
+        intros Hin.
+        destruct Hin as [Hin | Hin]; [|tauto].
+        subst y; tauto.
+
+      (* Case 2: s = x or s in gamma *)
+      + intros Hin Hin' Hneq.
+        apply (IHHcp s t ltac:(cbn; clear IHHcp; tauto) ltac:(cbn; clear IHHcp; tauto) Hneq).
+
+    - (* Proc_OutLeft *)
+      cbn; auto.
+    - (* Proc_OutRight *)
+      cbn; auto.
+    - (* Proc_InCase *)
+      cbn; intros s t Hin Hin' Hneq.
+      cbn in IHHcp1.
+      specialize (IHHcp1 s t Hin Hin' Hneq).
+      rewrite in_app_iff; auto.
+
+    - (* Proc_Server *)
+      cbn; intros s t.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      intros Hin.
+      destruct Hin as [Hin | Hin].
+      + subst s.
+        intros Hin' Hneq.
+        destruct Hin' as [? | Hin']; [contradiction|].
+
+        (* Simplify goal *)
+        rewrite eqb_refl.
+        rewrite filter_In.
+        rewrite <- (cp_channels _ _ _ Hcp).
+        rewrite negb_eqb_true_iff; cbn.
+
+        split; auto.
+        intros Heq; subst t.
+        tauto.
+
+      + destruct (eqb_spec x s).
+        1: subst s; contradiction.
+
+        (* Case 2: s in gamma *)
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        * clear i.
+          intros Hin' Hneq.
+          destruct Hin' as [Hin' | Hin'].
+          1: left; auto.
+          right.
+          apply (IHHcp s t ltac:(cbn; right; auto) ltac:(cbn; right; auto) Hneq).
+
+        * rewrite filter_In in n0.
+          rewrite negb_eqb_true_iff in n0.
+          rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          cbn in n0.
+          apply list_nin_helper in n0.
+          2: tauto.
+          contradiction.
+
+    - (* Proc_Server *)
+      cbn; intros s t.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      intros Hin.
+      destruct Hin as [Hin | Hin].
+      + subst s.
+        intros Hin' Hneq.
+        destruct Hin' as [? | Hin']; [contradiction|].
+
+        (* Simplify goal *)
+        rewrite eqb_refl.
+        rewrite filter_In.
+        rewrite <- (cp_channels _ _ _ Hcp).
+        rewrite negb_eqb_true_iff; cbn.
+
+        split; auto.
+        intros Heq; subst t.
+        tauto.
+
+      + destruct (eqb_spec x s).
+        1: subst s; contradiction.
+
+        (* Case 2: s in gamma *)
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        * clear i.
+          intros Hin' Hneq.
+          destruct Hin' as [Hin' | Hin'].
+          1: left; auto.
+          right.
+          apply (IHHcp s t ltac:(cbn; right; auto) ltac:(cbn; right; auto) Hneq).
+
+        * rewrite filter_In in n0.
+          rewrite negb_eqb_true_iff in n0.
+          rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          cbn in n0.
+          apply list_nin_helper in n0.
+          2: tauto.
+          contradiction.
+
+    - (* Proc_Client Null *)
+      cbn; intros s t.
+      (* Case 1 : s = x *)
+      destruct (eqb_spec x s).
+      + subst s; intros _.
+        intros Hin' Hneq.
+        destruct Hin' as [? | Hin']; [contradiction|].
+        rewrite <- (cp_channels _ _ _ Hcp); auto.
+
+      + (* Case 2: s in gamma *)
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        * intros _ Hin Hneq.
+          destruct Hin as [Hin | Hin].
+          1: left; auto.
+          right.
+          rewrite <- (cp_channels _ _ _ Hcp) in i; auto.
+
+        * rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          intros Hin; tauto.
+
+    - (* Proc_ClientSplit *)
+      cbn; intros s t.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      repeat rewrite senv_valid_cons in Hcp'; cbn in Hcp'.
+
+      (* Case 1: s = y *)
+      destruct (eqb_spec y s).
+      + subst s.
+        intros Hin; clear IHHcp; destruct Hin as [Hin | Hin]; [symmetry in Hin|]; tauto.
+
+      + (* Case 2: s = x or s in gamma *)
+        clear n.
+        intros Hin Hin' Hneq.
+        apply (IHHcp s t ltac:(cbn; clear IHHcp; tauto) ltac:(cbn; clear IHHcp; tauto) Hneq).
+
+    - (* Proc_OutTyp *)
+      cbn; auto.
+    - (* Proc_InTyp *)
+      cbn; auto.
+
+    - (* Proc_OutUnit *)
+      cbn; intros s t H1 H2.
+      destruct H1; destruct H2; try contradiction; subst s t; contradiction.
+
+    - (* Proc_InUnit *)
+      cbn; intros s t.
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        intros _ Hin Hneq.
+        destruct Hin as [Hin | Hin]; [contradiction|].
+        rewrite <- (cp_channels _ _ _ Hcp); auto.
+
+      + (* Case 2: s in gamma *)
+        intros Hin.
+        destruct Hin as [Hin | Hin]; [contradiction|].
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        2: rewrite <- (cp_channels _ _ _ Hcp) in n0; contradiction.
+        clear i.
+        intros Hin' Hneq.
+        destruct Hin' as [Hin' | Hin'].
+        1: left; auto.
+        right; apply IHHcp; auto.
+
+    - (* Proc_EmptyCase *)
+      intros s t.
+      unfold proc_forbidden.
+      cbn [map fst].
+      match goal with |- context[if ?p then _ else _] => destruct p end.
+      2: contradiction.
+      intros _ Hin Hneq.
+      rewrite filter_In.
+      rewrite negb_eqb_true_iff.
+      split; auto.
+
+    - (* Permutation *)
+      intros s t Hin1 Hin2 Hneq.
+      rewrite <- H in Hin1, Hin2.
+      auto.
+  Qed.
+
+  Definition str_list_repl (l : list chn) (s : chn) (t : chn) :=
+  map (fun x => if eqb x s then t else x) l.
+
+  Definition senv_rename (senv : SEnv) (s : chn) (t : chn) :=
+  map (fun z => match z with (x, a) => if eqb x s then (t, a) else (x, a) end) senv.
+
+  Lemma str_list_repl_ident : forall l s, str_list_repl l s s = l.
+  Proof.
+    intros l s.
+    unfold str_list_repl.
+    rewrite <- map_id.
+    apply map_ext.
+    intros s0; destruct (eqb_spec s0 s); try subst; auto.
+  Qed.
+
+  Lemma senv_rename_ident : forall (senv : SEnv) (s : chn), senv_rename senv s s = senv.
+  Proof.
+    intros senv s.
+    unfold senv_rename.
+    rewrite <- map_id.
+    apply map_ext.
+    intros z; destruct z.
+    destruct (eqb_spec t s); try subst; auto.
+  Qed.
+
+  Lemma senv_rename_repl : forall senv s t, map fst (senv_rename senv s t) = str_list_repl (map fst senv) s t.
+  Proof.
+    intros senv.
+    unfold str_list_repl, senv_rename.
+    intros s t.
+    do 2 rewrite map_map.
+    apply map_ext.
+    intros z; destruct z; cbn.
+    destruct (eqb_spec t0 s); cbn; auto.
+  Qed.
+
+  Lemma str_list_repl_nin : forall l s t,
+  ~ In s l ->
+  str_list_repl l s t = l.
+  Proof.
+    intros l s t Hnin.
+    unfold str_list_repl.
+    rewrite <- map_id.
+    apply map_ext_in.
+    intros s0 Hin.
+    destruct (eqb_spec s0 s); auto.
+    subst s0; contradiction.
+  Qed.
+
+  Lemma senv_rename_nin : forall senv s t,
+  ~ In s (map fst senv) ->
+  senv_rename senv s t = senv.
+  Proof.
+    intros senv s t Hnin.
+    rewrite <- (map_id senv) at 2.
+    unfold senv_rename.
+    apply map_ext_in.
+    intros z Hz; destruct z.
+    destruct (eqb_spec t0 s); auto.
+    subst t0.
+    exfalso; apply Hnin; rewrite in_map_iff; eexists; split.
+    2: apply Hz.
+    auto.
+  Qed.
+
+  Lemma senv_rename_app : forall senv senv' s t,
+  senv_rename (senv ++ senv') s t = senv_rename senv s t ++ senv_rename senv' s t.
+  Proof.
+    intros senv senv' s t.
+    unfold senv_rename.
+    apply map_app.
+  Qed.
+
+  Lemma senv_rename_nin_valid : forall senv s t,
+  senv_valid senv ->
+  ~ In t (map fst senv) ->
+  senv_valid (senv_rename senv s t).
+  Proof.
+    intros senv s t Hval Hnin.
+    unfold senv_valid.
+    unfold senv_valid in Hval.
+    revert Hval Hnin.
+    induction senv.
+    - cbn; constructor.
+    - intros Hval Hin.
+      cbn in Hin.
+      cbn in Hval.
+      rewrite NoDup_cons_iff in Hval.
+      specialize (IHsenv ltac:(tauto) ltac:(tauto)).
+
+      unfold senv_rename.
+      cbn [map fst].
+      fold (senv_rename senv s t).
+
+      constructor; auto.
+      unfold senv_rename.
+      rewrite map_map.
+      destruct a; cbn in Hval, Hin.
+      destruct (eqb_spec t0 s).
+      + subst t0.
+        cbn.
+        intros Hin'.
+        rewrite in_map_iff in Hin'.
+        destruct Hin' as (z & Hz1 & Hz2).
+        destruct z.
+        destruct (eqb_spec t0 s); cbn in Hz1; try subst t.
+        * subst t0.
+          apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+        * apply Hin; right; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+      + cbn.
+        intros Hin'.
+        rewrite in_map_iff in Hin'.
+        destruct Hin' as (z & Hz1 & Hz2).
+        destruct z.
+        destruct (eqb_spec t1 s); cbn in Hz1; subst t0; try subst t1.
+        * tauto.
+        * apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+  Qed.
+
+  Lemma senv_rename_snd :
+  forall senv s t, map snd (senv_rename senv s t) = map snd senv.
+  Proof.
+    intros senv s t.
+    unfold senv_rename.
+    rewrite map_map.
+    apply map_ext.
+    intros z.
+    destruct z.
+    destruct (eqb t0 s); cbn; auto.
+  Qed.
+
+  (* Replace channel name s with t *)
+  (* If s is a channel of p, then we assume ~ In t (proc_forbidden p s) *)
+  (* If s is not a channel of p, leave p unchanged *)
+  Fixpoint proc_rename (p : Process) (s : chn) (t : chn) :=
+  match p with
+  | Proc_Link x y => Proc_Link (if eqb x s then t else x) (if eqb y s then t else y)
+  | Proc_Comp x a p q => if eqb x s then Proc_Comp x a p q else Proc_Comp x a (proc_rename p s t) (proc_rename q s t)
+  | Proc_OutCh x y p q => if eqb x s then Proc_OutCh t y p (proc_rename q s t) else if eqb y s then Proc_OutCh x y p (proc_rename q s t) else Proc_OutCh x y (proc_rename p s t) (proc_rename q s t)
+  | Proc_InCh x y p => if eqb y s then Proc_InCh x y p else if eqb x s then Proc_InCh t y (proc_rename p s t) else Proc_InCh x y (proc_rename p s t)
+  | Proc_OutLeft x p => Proc_OutLeft (if eqb x s then t else x) (proc_rename p s t)
+  | Proc_OutRight x p => Proc_OutRight (if eqb x s then t else x) (proc_rename p s t)
+  | Proc_InCase x p q => Proc_InCase (if eqb x s then t else x) (proc_rename p s t) (proc_rename q s t)
+  | Proc_Server x y p => if eqb x s then Proc_Server t y p else if eqb y s then Proc_Server x y p else Proc_Server x y (proc_rename p s t)
+  | Proc_Client x y p => if eqb x s then Proc_Client t y p else if eqb y s then Proc_Client x y p else Proc_Client x y (proc_rename p s t)
+  | Proc_ClientNull x p => if eqb x s then Proc_ClientNull t p else Proc_ClientNull x (proc_rename p s t)
+  | Proc_ClientSplit x y p => if eqb y s then Proc_ClientSplit x y p else if eqb x s then Proc_ClientSplit t y (proc_rename p s t) else Proc_ClientSplit x y (proc_rename p s t)
+  | Proc_OutTyp x a v b p => if eqb x s then Proc_OutTyp t a v b (proc_rename p s t) else Proc_OutTyp x a v b (proc_rename p s t)
+  | Proc_InTyp x v p => if eqb x s then Proc_InTyp t v (proc_rename p s t) else Proc_InTyp x v (proc_rename p s t)
+  | Proc_OutUnit x => if eqb x s then Proc_OutUnit t else Proc_OutUnit x
+  | Proc_InUnit x p => if eqb x s then Proc_InUnit t p else Proc_InUnit x (proc_rename p s t)
+  | Proc_EmptyCase x l => if eqb x s then Proc_EmptyCase t l else Proc_EmptyCase x (str_list_repl l s t)
+  end.
+
+  Lemma proc_rename_ident : forall p s, proc_rename p s s = p.
+  Proof.
+    intros p s.
+    induction p.
+    all: cbn; repeat match goal with |- context[eqb ?x ?y] => destruct (eqb_spec x y); try subst end; try congruence.
+    rewrite str_list_repl_ident; auto.
+  Qed.  
+
+  Lemma cp_proc_rename :
+  forall p s t gamma,
+  cp p gamma ->
+  ~ In t (proc_forbidden p s) ->
+  In s (map fst gamma) /\ cp (proc_rename p s t) (senv_rename gamma s t) \/
+  ~ In s (map fst gamma) /\ proc_rename p s t = p.
+  Proof.
+    intros p s t gamma Hcp.
+    (* We first handle the case where s = t. In this case the process remains unchanged *)
+    destruct (eq_dec s t).
+    1: { intros _; subst t.
+         rewrite proc_rename_ident.
+         rewrite senv_rename_ident.
+         destruct (in_dec eq_dec s (map fst gamma)).
+         - left; split; auto.
+         - right; split; auto.
+    }
+
+    (* Now the difficult part *)
+    revert s t n.
+    induction Hcp.
+    - (* Proc_Link *)
+      cbn; intros s t Hneq Hallow.
+      (* Case 1: s = w *)
+      destruct (eqb_spec w s).
+      + subst s.
+        replace (eqb x w) with false.
+        2: symmetry; rewrite eqb_neq; auto.
+        cbn in Hallow.
+        left; split; auto.
+        constructor; firstorder.
+
+      + (* Case 2: s = x *)
+        destruct (eqb_spec x s).
+        * subst s.
+          left; split; auto.
+          constructor; firstorder.
+        * right; split; auto; tauto.
+
+    - (* Proc_Comp *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        right; split; auto.
+        rewrite map_app; rewrite in_app_iff.
+        tauto.
+
+      + (* Case 2: s in gamma *)
+        match type of Hallow with context[if ?p then _ else _] => destruct p end.
+        * (* s in gamma *)
+          rewrite filter_In in i.
+          destruct i as (i & _).
+          rewrite <- cp_channels in i.
+          2: apply Hcp1.
+          cbn in i.
+          destruct i as [? | i]; [contradiction|].
+
+          (* s in gamma -> s not in delta *)
+          unfold senv_disjoint in H.
+          specialize (H _ i) as i'.
+
+          (* Simplify Hallow *)
+          rewrite in_app_iff in Hallow.
+          rewrite filter_In in Hallow.
+          rewrite Bool.negb_true_iff in Hallow.
+          rewrite eqb_neq in Hallow.
+          rewrite <- (cp_channels _ _ _ Hcp2) in Hallow.
+          cbn in Hallow.
+
+          (* Simplify IHHcp1 *)
+          specialize (IHHcp1 s t Hneq ltac:(tauto)).
+          cbn [map fst] in IHHcp1.
+          destruct IHHcp1 as [(_ & IHHcp1) | ?]; [|firstorder].
+          cbn in IHHcp1; fold (senv_rename gamma s t) in IHHcp1.
+          replace (eqb x s) with false in IHHcp1 by (symmetry; rewrite eqb_neq; auto).
+
+          (* Simplify IHHcp2 *)
+          specialize (IHHcp2 s t Hneq).
+          erewrite proc_forbidden_empty in IHHcp2.
+          2: apply Hcp2.
+          2: cbn; tauto.
+          specialize (IHHcp2 ltac:(auto)).
+          cbn [map fst] in IHHcp2.
+          destruct IHHcp2 as [? | (_ & IHHcp2)]; [firstorder|].
+
+          left; split.
+          1: rewrite map_app; rewrite in_app_iff; left; auto.
+          rewrite IHHcp2.
+          rewrite senv_rename_app.
+          rewrite (senv_rename_nin delta); auto.
+          constructor; auto.
+
+          (* disjointness *)
+          unfold senv_disjoint.
+          intros m Hin.
+          unfold senv_rename in Hin.
+          rewrite map_map in Hin.
+          rewrite in_map_iff in Hin.
+          destruct Hin as (z & Hz1 & Hz2).
+          destruct z.
+          destruct (eqb_spec t0 s); cbn in Hz1; subst m.
+          -- subst t0.
+             intros Hin; apply Hallow; right.
+             split; [tauto|].
+             intros Heq; subst t; tauto.
+          -- apply H.
+             rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+        * rewrite filter_In in n0.
+          rewrite negb_eqb_true_iff in n0.
+          rewrite <- (cp_channels _ _ _ Hcp1) in n0.
+          cbn in n0.
+          assert (n0' : ~ In s (map fst gamma)) by tauto.
+
+          (* Case 3: s in delta *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          -- rewrite filter_In in i.
+             destruct i as (i & _).
+             rewrite <- cp_channels in i.
+             2: apply Hcp2.
+             cbn in i.
+             destruct i as [? | i]; [contradiction|].
+
+             (* Simplify Hallow *)
+             rewrite in_app_iff in Hallow.
+             rewrite filter_In in Hallow.
+             rewrite Bool.negb_true_iff in Hallow.
+             rewrite eqb_neq in Hallow.
+             rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
+             cbn in Hallow.
+
+             (* Simplify IHHcp2 *)
+             specialize (IHHcp2 s t Hneq ltac:(tauto)).
+             cbn [map fst] in IHHcp2.
+             destruct IHHcp2 as [(_ & IHHcp2) | ?]; [|firstorder].
+             cbn in IHHcp2; fold (senv_rename delta s t) in IHHcp2.
+             replace (eqb x s) with false in IHHcp2 by (symmetry; rewrite eqb_neq; auto).
+
+             (* Simplify IHHcp1 *)
+             specialize (IHHcp1 s t Hneq).
+             erewrite proc_forbidden_empty in IHHcp1.
+             2: apply Hcp1.
+             2: cbn; tauto.
+             specialize (IHHcp1 ltac:(auto)).
+             cbn [map fst] in IHHcp1.
+             destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
+
+             left; split.
+             1: rewrite map_app; rewrite in_app_iff; right; auto.
+             rewrite IHHcp1.
+             rewrite senv_rename_app.
+             rewrite (senv_rename_nin gamma); auto.
+             constructor; auto.
+
+             (* disjointness *)
+             unfold senv_disjoint.
+             intros m Hin.
+             unfold senv_disjoint in H.
+             specialize (H _ Hin) as Hm.
+             unfold senv_rename.
+             rewrite map_map.
+             rewrite in_map_iff.
+             intros Hin'.
+             destruct Hin' as (z & Hz1 & Hz2).
+             destruct z.
+             destruct (eqb_spec t0 s); cbn in Hz1; subst m.
+             ++ subst t0.
+                apply Hallow; right.
+                split; [auto|].
+                intros Heq; subst t; tauto.
+             ++ apply Hm; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+          -- (* Case 4: s not a channel *)
+             rewrite filter_In in n1.
+             rewrite Bool.negb_true_iff in n1.
+             rewrite eqb_neq in n1.
+             rewrite <- (cp_channels _ _ _ Hcp2) in n1.
+             cbn in n1.
+             assert (n1' : ~ In s (map fst delta)) by tauto.
+
+             (* Simplify IHHcp1, IHHcp2 *)
+             specialize (IHHcp1 s t Hneq).
+             specialize (IHHcp2 s t Hneq).
+             erewrite proc_forbidden_empty in IHHcp1, IHHcp2.
+             2: apply Hcp2.
+             3: apply Hcp1.
+             2,3: cbn; tauto.
+             specialize (IHHcp1 ltac:(auto)).
+             specialize (IHHcp2 ltac:(auto)).
+             cbn [map fst] in IHHcp1, IHHcp2.
+             destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
+             destruct IHHcp2 as [? | (_ & IHHcp2)]; [tauto|].
+
+             right; rewrite IHHcp1, IHHcp2; split; auto.
+             rewrite map_app; rewrite in_app_iff; tauto.
+
+    - (* Proc_OutCh *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+
+        (* Simplify goal *)
+        rewrite map_app.
+        fold (senv_rename delta x t).
+        rewrite senv_rename_nin; [|tauto].
+        fold (senv_rename gamma x t).
+        rewrite senv_rename_nin; auto.
+
+        (* Simplify Hallow *)
+        rewrite in_app_iff in Hallow.
+        rewrite filter_In in Hallow.
+        rewrite negb_eqb_true_iff in Hallow.
+        rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
+        cbn in Hallow.
+
+        (* Simplify IHHcp2 *)
+        specialize (IHHcp2 x t Hneq ltac:(tauto)).
+        destruct IHHcp2 as [(_ & IHHcp2) | IHHcp2].
+        2: cbn in IHHcp2; tauto.
+        cbn in IHHcp2.
+        rewrite eqb_refl in IHHcp2.
+        fold (senv_rename delta x t) in IHHcp2.
+        rewrite senv_rename_nin in IHHcp2; [|tauto].
+
+        constructor; auto.
+        intros Hin; apply Hallow; left; split; auto.
+        intros Heq; subst t.
+        tauto.
+
+      + (* Case 2: s = y *)
+        destruct (eqb_spec y s).
+        * subst s.
+          (* y cannot appear in gamma *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          1: { rewrite filter_In in i.
+               rewrite <- (cp_channels _ _ _ Hcp1) in i.
+               rewrite eqb_refl in i.
+               cbn in i; destruct i; discriminate.
+          }
+
+          clear n0.
+          (* Case 2.1: y is part of delta *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          -- rewrite filter_In in i.
+             rewrite negb_eqb_true_iff in i.
+             rewrite <- (cp_channels _ _ _ Hcp2) in i.
+             cbn in i.
+             assert (i' : In y (map fst delta)) by tauto.
+
+             (* Simplify Hallow *)
+             rewrite in_app_iff in Hallow.
+             rewrite filter_In in Hallow.
+             rewrite negb_eqb_true_iff in Hallow.
+             rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
+             cbn in Hallow.
+
+             (* Simplify goal *)
+             left; split.
+             1: right; rewrite map_app; rewrite in_app_iff; right; auto.
+             rewrite map_app.
+             fold (senv_rename gamma y t).
+             rewrite senv_rename_nin; [|tauto].
+             fold (senv_rename delta y t).
+
+             (* Simplify IHHcp2 *)
+             specialize (IHHcp2 y t Hneq ltac:(tauto)).
+             cbn in IHHcp2.
+             replace (eqb x y) with false in IHHcp2; [|symmetry; rewrite eqb_neq; auto].
+             fold (senv_rename delta y t) in IHHcp2.
+             destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)].
+             2: tauto.
+
+             constructor; auto.
+
+             (* disjointness *)
+             unfold senv_disjoint.
+             intros m Hm.
+             unfold senv_rename; rewrite map_map.
+             rewrite in_map_iff.
+             intros Hin.
+             destruct Hin as (z & Hz1 & Hz2).
+             destruct z.
+             destruct (eqb_spec t0 y); cbn in Hz1; subst m.
+             ++ subst t0.
+                tauto.
+             ++ unfold senv_disjoint in H0.
+                specialize (H0 _ Hm).
+                apply H0; rewrite in_map_iff.
+                eexists; split; try apply Hz2; auto.
+
+          -- (* Case 2.2: y not in delta *)
+             rewrite filter_In in n0.
+             rewrite <- (cp_channels _ _ _ Hcp2) in n0.
+             cbn in n0.
+             rewrite negb_eqb_true_iff in n0.
+             assert (n0' : ~ In y (map fst delta)) by tauto.
+
+             (* Simplify IHHcp2 *)
+             specialize (IHHcp2 y t Hneq).
+             erewrite proc_forbidden_empty in IHHcp2.
+             2: apply Hcp2.
+             2: cbn; tauto.
+             specialize (IHHcp2 ltac:(auto)).
+             destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2')].
+             1: cbn in IHHcp2; tauto.
+
+             right; split.
+             1: rewrite map_app; rewrite in_app_iff; tauto.
+             rewrite IHHcp2'; auto.
+
+        * (* Case 3: s in gamma *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          -- rewrite filter_In in i.
+             rewrite negb_eqb_true_iff in i.
+             rewrite <- (cp_channels _ _ _ Hcp1) in i.
+             cbn in i.
+             assert (i' : In s (map fst gamma)) by tauto.
+
+             (* s not in delta *)
+             unfold senv_disjoint in H0.
+             specialize (H0 _ i') as i''.
+
+             left; split.
+             1: right; rewrite map_app; rewrite in_app_iff; auto.
+
+             (* Simplify goal *)
+             rewrite map_app.
+             fold (senv_rename gamma s t).
+             fold (senv_rename delta s t).
+             rewrite (senv_rename_nin delta s t); auto.
+
+             (* Simplify IHHcp2 *)
+             specialize (IHHcp2 s t Hneq).
+             erewrite proc_forbidden_empty in IHHcp2.
+             2: apply Hcp2.
+             2: cbn; tauto.
+             specialize (IHHcp2 ltac:(auto)).
+             destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2')].
+             1: cbn in IHHcp2; tauto.
+             rewrite IHHcp2'.
+
+             (* Simplify Hallow *)
+             cbn in Hallow.
+             rewrite in_app_iff in Hallow.
+             rewrite filter_In in Hallow.
+             rewrite <- (cp_channels _ _ _ Hcp2) in Hallow.
+             rewrite negb_eqb_true_iff in Hallow.
+             cbn in Hallow.
+
+             (* Simplify IHHcp1 *)
+             specialize (IHHcp1 s t Hneq ltac:(tauto)).
+             destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)].
+             2: cbn in IHHcp1; tauto.
+             cbn in IHHcp1.
+             replace (eqb y s) with false in IHHcp1 by (symmetry; rewrite eqb_neq; auto).
+             fold (senv_rename gamma s t) in IHHcp1.
+
+             constructor; auto.
+             ++ (* x not in new gamma *)
+                unfold senv_rename; rewrite map_map.
+                rewrite in_map_iff.
+                intros Hin.
+                destruct Hin as (z & Hz1 & Hz2).
+                destruct z.
+                destruct (eqb_spec t0 s); cbn in Hz1.
+                ** subst t0 t.
+                   apply Hallow; auto.
+                ** subst t0.
+                   apply H; apply in_map_iff; eexists; split; try apply Hz2; auto.
+
+             ++ (* disjointness *)
+                unfold senv_disjoint.
+                intros m Hm.
+                unfold senv_rename in Hm; rewrite map_map in Hm.
+                rewrite in_map_iff in Hm.
+                destruct Hm as (z & Hz1 & Hz2).
+                destruct z.
+                destruct (eqb_spec t0 s); cbn in Hz1.
+                ** subst t0 m.
+                   intros Hin; apply Hallow; right; right.
+                   tauto.
+                ** subst t0.
+                   apply H0; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+          -- (* Case 4: s in delta, symmetric to case 3 *)
+             match type of Hallow with context[if ?p then _ else _] => destruct p end.
+             ++ rewrite filter_In in i.
+                rewrite negb_eqb_true_iff in i.
+                rewrite <- (cp_channels _ _ _ Hcp2) in i.
+                cbn in i.
+                assert (i' : In s (map fst delta)) by tauto.
+
+                (* s not in gamma *)
+                unfold senv_disjoint in H0.
+                assert (H0' : ~ In s (map fst gamma)).
+                { intros Hin; apply (H0 _ Hin i'). }
+
+                left; split.
+                1: right; rewrite map_app; rewrite in_app_iff; auto.
+
+                (* Simplify goal *)
+                rewrite map_app.
+                fold (senv_rename gamma s t).
+                fold (senv_rename delta s t).
+                rewrite (senv_rename_nin gamma s t); auto.
+
+                (* Simplify IHHcp1 *)
+                specialize (IHHcp1 s t Hneq).
+                erewrite proc_forbidden_empty in IHHcp1.
+                2: apply Hcp1.
+                2: cbn; tauto.
+                specialize (IHHcp1 ltac:(auto)).
+                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1')].
+                1: cbn in IHHcp1; tauto.
+                rewrite IHHcp1'.
+
+                (* Simplify Hallow *)
+                cbn in Hallow.
+                rewrite in_app_iff in Hallow.
+                rewrite filter_In in Hallow.
+                rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
+                rewrite negb_eqb_true_iff in Hallow.
+                cbn in Hallow.
+
+                (* Simplify IHHcp2 *)
+                specialize (IHHcp2 s t Hneq ltac:(tauto)).
+                destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)].
+                2: cbn in IHHcp2; tauto.
+                cbn in IHHcp2.
+                replace (eqb x s) with false in IHHcp2 by (symmetry; rewrite eqb_neq; auto).
+                fold (senv_rename delta s t) in IHHcp2.
+
+                constructor; auto.
+
+                (* disjointness *)
+                unfold senv_disjoint.
+                intros m Hm.
+                unfold senv_rename; rewrite map_map.
+                rewrite in_map_iff.
+                intros Hin.
+                destruct Hin as (z & Hz1 & Hz2).
+                destruct z.
+                destruct (eqb_spec t0 s); cbn in Hz1.
+                ** subst t0 m.
+                   apply Hallow; right; split; auto.
+                   intros Heq; subst t.
+                   tauto.
+                ** subst m.
+                   apply (H0 t0); auto; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+             ++ (* Case 5: s not a channel *)
+                rewrite filter_In in n1, n2.
+                rewrite negb_eqb_true_iff in n1, n2.
+                rewrite <- (cp_channels _ _ _ Hcp1) in n1.
+                rewrite <- (cp_channels _ _ _ Hcp2) in n2.
+                cbn in n1, n2.
+                assert (n1' : ~ In s (map fst gamma)) by tauto.
+                assert (n2' : ~ In s (map fst delta)) by tauto.
+
+                right; split.
+                1: rewrite map_app, in_app_iff; tauto.
+
+                (* Simplify IHHcp1, IHHcp2 *)
+                specialize (IHHcp1 s t Hneq).
+                specialize (IHHcp2 s t Hneq).
+                erewrite proc_forbidden_empty in IHHcp1, IHHcp2.
+                2: apply Hcp2.
+                3: apply Hcp1.
+                2,3: cbn; tauto.
+                specialize (IHHcp1 ltac:(auto)).
+                specialize (IHHcp2 ltac:(auto)).
+                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)].
+                1: tauto.
+                destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)].
+                1: tauto.
+
+                rewrite IHHcp1, IHHcp2; auto.
+
+    - (* Proc_InCh *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      repeat rewrite senv_valid_cons in Hcp'.
+      cbn in Hcp'.
+
+      (* Case 1: s = y *)
+      destruct (eqb_spec y s).
+      + subst s.
+        clear Hallow.
+
+        right; split; auto.
+        clear IHHcp; firstorder.
+
+      + (* Case 2: s = x *)
+        destruct (eqb_spec x s).
+        * subst s.
+          left; split; auto.
+          fold (senv_rename gamma x t).
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp x t Hneq Hallow).
+          cbn [map fst] in IHHcp.
+          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
+          2: cbn in IHHcp; tauto.
+          cbn in IHHcp.
+          rewrite eqb_refl in IHHcp.
+          replace (eqb y x) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
+          fold (senv_rename gamma x t) in IHHcp.
+
+          constructor; auto.
+
+        * (* Case 3: s in gamma or s not a channel *)
+          fold (senv_rename gamma s t).
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp s t Hneq Hallow).
+          cbn in IHHcp.
+          replace (eqb x s) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
+          replace (eqb y s) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
+          fold (senv_rename gamma s t) in IHHcp.
+
+          destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+          -- (* Case 3.1: s in gamma *)
+            left; split; [tauto|].
+            constructor; auto.
+          -- (* Case 3.2: s not a channel *)
+            right; split; [tauto|].
+            rewrite IHHcp2; auto.
+
+    - (* Proc_OutLeft *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        fold (senv_rename gamma x t).
+
+        (* Simplify IHHcp *)
+        specialize (IHHcp x t Hneq Hallow).
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
+        2: cbn in IHHcp; tauto.
+        cbn in IHHcp.
+        rewrite eqb_refl in IHHcp.
+        fold (senv_rename gamma x t) in IHHcp.
+
+        constructor; auto.
+
+      + (* Case 2: s in gamma or s not a channel *)
+        specialize (IHHcp s t Hneq Hallow).
+        destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+        * (* Case 2.1: s in gamma *)
+          cbn in IHHcp1.
+          destruct IHHcp1 as [? | IHHcp1]; [tauto|].
+
+          cbn in IHHcp2.
+          destruct (eqb_spec x s); try contradiction.
+          fold (senv_rename gamma s t) in IHHcp2.
+
+          left; split; auto.
+          fold (senv_rename gamma s t).
+          constructor; auto.
+
+        * (* Case 2.2: s not a channel *)
+          cbn in IHHcp1.
+          right; split; auto.
+          rewrite IHHcp2; auto.
+
+    - (* Proc_OutRight *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        fold (senv_rename gamma x t).
+
+        (* Simplify IHHcp *)
+        specialize (IHHcp x t Hneq Hallow).
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
+        2: cbn in IHHcp; tauto.
+        cbn in IHHcp.
+        rewrite eqb_refl in IHHcp.
+        fold (senv_rename gamma x t) in IHHcp.
+
+        constructor; auto.
+
+      + (* Case 2: s in gamma or s not a channel *)
+        specialize (IHHcp s t Hneq Hallow).
+        destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+        * (* Case 2.1: s in gamma *)
+          cbn in IHHcp1.
+          destruct IHHcp1 as [? | IHHcp1]; [tauto|].
+
+          cbn in IHHcp2.
+          destruct (eqb_spec x s); try contradiction.
+          fold (senv_rename gamma s t) in IHHcp2.
+
+          left; split; auto.
+          fold (senv_rename gamma s t).
+          constructor; auto.
+
+        * (* Case 2.2: s not a channel *)
+          cbn in IHHcp1.
+          right; split; auto.
+          rewrite IHHcp2; auto.
+
+    - (* Proc_InCase *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+
+      (* Simplify Hallow *)
+      rewrite in_app_iff in Hallow.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        fold (senv_rename gamma x t).
+
+        (* Simplify IHHcp1 *)
+        specialize (IHHcp1 x t Hneq ltac:(tauto)).
+        cbn in IHHcp1.
+        destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)].
+        2: tauto.
+        rewrite eqb_refl in IHHcp1.
+        fold (senv_rename gamma x t) in IHHcp1.
+
+        (* Simplify IHHcp2 *)
+        specialize (IHHcp2 x t Hneq ltac:(tauto)).
+        cbn in IHHcp2.
+        destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)].
+        2: tauto.
+        rewrite eqb_refl in IHHcp2.
+        fold (senv_rename gamma x t) in IHHcp2.
+
+        constructor; auto.
+
+      + (* Case 2: s in gamma or not a channel *)
+        (* Simplify IHHcp1 *)
+        specialize (IHHcp1 s t Hneq ltac:(tauto)).
+        cbn in IHHcp1.
+        assert (n' : eqb x s = false) by (rewrite eqb_neq; auto).
+        rewrite n' in IHHcp1.
+        fold (senv_rename gamma s t) in IHHcp1.
+
+        (* Simplify IHHcp2 *)
+        specialize (IHHcp2 s t Hneq ltac:(tauto)).
+        cbn in IHHcp2.
+        rewrite n' in IHHcp2.
+        fold (senv_rename gamma s t) in IHHcp2.
+
+        destruct IHHcp1 as [(IHHcp1 & IHHcp1') | (IHHcp1 & IHHcp1')].
+        * (* Case 2.1: s in gamma *)
+          destruct IHHcp1 as [? | IHHcp1]; [contradiction|].
+
+          (* Simplify IHHcp2 *)          
+          destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)].
+          2: tauto.
+
+          left; split; auto.
+          fold (senv_rename gamma s t).
+          constructor; auto.
+
+        * (* Case 2.2: s not a channel *)
+          (* Simplify IHHcp2 *)
+          destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)].
+          1: contradiction.
+
+          right; split; auto.
+          rewrite IHHcp1', IHHcp2; auto.
+
+    - (* Proc_Server *)
+      cbn; intros s t Hneq Hallow.
+      rewrite Forall_forall in H.
+
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        fold (senv_rename gamma x t).
+
+        (* Simplify Hallow *)
+        rewrite filter_In in Hallow.
+        rewrite negb_eqb_true_iff in Hallow.
+        rewrite <- (cp_channels _ _ _ Hcp) in Hallow.
+        cbn in Hallow.
+        assert (Hallow' : ~ In t (map fst gamma)) by (revert Hallow; apply list_nin_helper; tauto).
+
+        constructor.
+        * (* ques *)
+          rewrite Forall_forall.
+          intros z Hz.
+          unfold senv_rename in Hz.
+          rewrite map_map in Hz.
+          rewrite in_map_iff in Hz.
+          destruct Hz as (w & Hw1 & Hw2).
+          destruct w; cbn in Hw1; subst z.
+          specialize (H s ltac:(rewrite in_map_iff; eexists; split; try apply Hw2; auto)).
+          destruct (eqb t0 x); cbn; auto.
+
+        * (* nodup *)
+          unfold senv_rename.
+          rewrite map_map.
+          rewrite in_map_iff.
+          intros Hin.
+          destruct Hin as (z & Hz1 & Hz2).
+          destruct z.
+          destruct (eqb_spec t0 x); cbn in Hz1; subst t0; try subst t.
+          1: apply H0. 2: apply Hallow'. all: rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+        * rewrite senv_rename_nin; auto.
+
+      + (* Case 2: s = y *)
+        destruct (eqb_spec y s).
+        * subst s.
+          right; split; [tauto|]; auto.
+
+        * (* Case 3: s in gamma *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          -- (* Simplify i *)
+             rewrite filter_In in i.
+             rewrite negb_eqb_true_iff in i.
+             rewrite <- (cp_channels _ _ _ Hcp) in i.
+             cbn in i.
+             destruct i as ([? | i] & _); [contradiction|].
+
+             cbn in Hallow.
+
+             (* Simplify IHHcp *)
+             specialize (IHHcp s t Hneq ltac:(tauto)).
+             cbn in IHHcp.
+             replace (eqb y s) with false in IHHcp by (symmetry; rewrite eqb_neq; auto).
+             destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
+             fold (senv_rename gamma s t) in IHHcp.
+
+             left; split; auto.
+             fold (senv_rename gamma s t).
+             constructor; auto.
+             ++ (* ques *)
+                rewrite Forall_forall.
+                intros z Hz.
+                unfold senv_rename in Hz.
+                rewrite map_map in Hz.
+                rewrite in_map_iff in Hz.
+                destruct Hz as (w & Hw1 & Hw2).
+                destruct w.
+                specialize (H s0 ltac:(rewrite in_map_iff; eexists; split; try apply Hw2; auto)).
+                destruct (eqb t0 s); cbn in Hw1; subst z; auto.
+
+             ++ (* nodup *)
+                unfold senv_rename.
+                rewrite map_map.
+                rewrite in_map_iff.
+                intros Hin.
+                destruct Hin as (z & Hz1 & Hz2).
+                destruct z.
+                destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
+                1: tauto.
+                apply H0; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+          -- (* Case 4: s not a channel *)
+             (* Simplify n1 *)
+             rewrite filter_In in n1.
+             rewrite negb_eqb_true_iff in n1.
+             rewrite <- (cp_channels _ _ _ Hcp) in n1.
+             cbn in n1.
+             assert (n1' : ~ In s (map fst gamma)) by tauto.
+
+             right; split; [tauto|].
+
+             (* Simplify IHHcp *)
+             specialize (IHHcp s t Hneq).
+             erewrite proc_forbidden_empty in IHHcp.
+             2: apply Hcp.
+             2: cbn; tauto.
+             specialize (IHHcp ltac:(auto)).
+             destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)].
+             1: cbn in IHHcp; tauto.
+
+             rewrite IHHcp; auto.
+
+    - (* Proc_Client *)
+      cbn; intros s t Hneq Hallow.
+
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        fold (senv_rename gamma x t).
+
+        (* Simplify Hallow *)
+        rewrite filter_In in Hallow.
+        rewrite negb_eqb_true_iff in Hallow.
+        rewrite <- (cp_channels _ _ _ Hcp) in Hallow.
+        cbn in Hallow.
+        assert (Hallow' : ~ In t (map fst gamma)) by (revert Hallow; apply list_nin_helper; tauto).
+
+        constructor.
+        * (* nodup *)
+          unfold senv_rename.
+          rewrite map_map.
+          rewrite in_map_iff.
+          intros Hin.
+          destruct Hin as (z & Hz1 & Hz2).
+          destruct z.
+          destruct (eqb_spec t0 x); cbn in Hz1; subst t0; try subst t.
+          1: apply H. 2: apply Hallow'. all: rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+        * rewrite senv_rename_nin; auto.
+
+      + (* Case 2: s = y *)
+        destruct (eqb_spec y s).
+        * subst s.
+          right; split; [tauto|]; auto.
+
+        * (* Case 3: s in gamma *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          -- (* Simplify i *)
+             rewrite filter_In in i.
+             rewrite negb_eqb_true_iff in i.
+             rewrite <- (cp_channels _ _ _ Hcp) in i.
+             cbn in i.
+             destruct i as ([? | i] & _); [contradiction|].
+
+             cbn in Hallow.
+
+             (* Simplify IHHcp *)
+             specialize (IHHcp s t Hneq ltac:(tauto)).
+             cbn in IHHcp.
+             replace (eqb y s) with false in IHHcp by (symmetry; rewrite eqb_neq; auto).
+             destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
+             fold (senv_rename gamma s t) in IHHcp.
+
+             left; split; auto.
+             fold (senv_rename gamma s t).
+             constructor; auto.
+             ++ (* nodup *)
+                unfold senv_rename.
+                rewrite map_map.
+                rewrite in_map_iff.
+                intros Hin.
+                destruct Hin as (z & Hz1 & Hz2).
+                destruct z.
+                destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
+                1: tauto.
+                apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+          -- (* Case 4: s not a channel *)
+             (* Simplify n1 *)
+             rewrite filter_In in n1.
+             rewrite negb_eqb_true_iff in n1.
+             rewrite <- (cp_channels _ _ _ Hcp) in n1.
+             cbn in n1.
+             assert (n1' : ~ In s (map fst gamma)) by tauto.
+
+             right; split; [tauto|].
+
+             (* Simplify IHHcp *)
+             specialize (IHHcp s t Hneq).
+             erewrite proc_forbidden_empty in IHHcp.
+             2: apply Hcp.
+             2: cbn; tauto.
+             specialize (IHHcp ltac:(auto)).
+             destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)].
+             1: cbn in IHHcp; tauto.
+
+             rewrite IHHcp; auto.
+
+    - (* Proc_ClientNull *)
+      cbn; intros s t Hneq Hallow.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+
+        (* Simplify IHHcp *)
+        specialize (IHHcp x t Hneq).
+        erewrite proc_forbidden_empty in IHHcp.
+        2: apply Hcp.
+        2: auto.
+        rewrite <- (cp_channels _ _ _ Hcp) in Hallow.
+        specialize (IHHcp ltac:(auto)).
+        destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)]; [tauto|].
+
+        fold (senv_rename gamma x t).
+        rewrite senv_rename_nin; auto.
+        constructor; auto.
+
+      + (* Case 2: s in gamma *)
+        match type of Hallow with context[if ?p then _ else _] => destruct p end.
+        * rewrite <- (cp_channels _ _ _ Hcp) in i.
+          left; split; auto.
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp s t Hneq ltac:(cbn in Hallow; auto)).
+          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
+
+          fold (senv_rename gamma s t).
+          constructor; auto.
+          -- (* nodup *)
+             unfold senv_rename.
+             rewrite map_map.
+             rewrite in_map_iff.
+             intros Hin.
+             destruct Hin as (z & Hz1 & Hz2).
+             destruct z.
+             destruct (eqb_spec t0 s); cbn in Hz1; subst x.
+             ++ subst t0.
+                cbn in Hallow; tauto.
+             ++ apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+        * (* Case 3: s not a channel *)
+          rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          right; split; [tauto|].
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp s t Hneq).
+          erewrite proc_forbidden_empty in IHHcp.
+          2: apply Hcp.
+          2: auto.
+          specialize (IHHcp ltac:(auto)).
+          destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)]; [contradiction|].
+
+          rewrite IHHcp; auto.
+
+    - (* Proc_ClientSplit *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      repeat rewrite senv_valid_cons in Hcp'.
+      cbn in Hcp'.
+
+      (* Case 1: s = y *)
+      destruct (eqb_spec y s).
+      + subst s.
+        right; split; [firstorder | auto].
+
+      + (* Case 2: s = x *)
+        destruct (eqb_spec x s).
+        * subst s.
+          left; split; auto.
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp x t Hneq Hallow).
+          cbn in IHHcp.
+          rewrite eqb_refl in IHHcp.
+          replace (eqb y x) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
+          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
+          2: tauto.
+          fold (senv_rename gamma x t).
+          fold (senv_rename gamma x t) in IHHcp.
+          rewrite senv_rename_nin in *; try tauto.
+
+          constructor; auto.
+
+        * (* Case 3: s in gamma or not a channel *)
+          specialize (IHHcp s t Hneq Hallow).
+          cbn in IHHcp.
+          replace (eqb x s) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
+          replace (eqb y s) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
+          fold (senv_rename gamma s t) in IHHcp.
+          fold (senv_rename gamma s t).
+
+          destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+          -- (* Case 3.1: s in gamma *)
+             left; split; [tauto|].
+             constructor; auto.
+          -- (* Case 3.2: not a channel *)
+             right; split; [tauto|].
+             rewrite IHHcp2; auto.
+
+    - (* Proc_OutTyp *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+
+        (* Specialize (IHHcp *)
+        specialize (IHHcp x t Hneq Hallow).
+        cbn in IHHcp.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
+        2: tauto.
+        rewrite eqb_refl in IHHcp.
+        constructor; auto.
+
+      + (* Case 2: s in gamma or s not a channel *)
+        specialize (IHHcp s t Hneq Hallow).
+        cbn in IHHcp.
+        replace (eqb x s) with false in IHHcp by (symmetry; rewrite eqb_neq; auto).
+        destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+        -- left; split; auto.
+           constructor; auto.
+        -- right; split; auto.
+           rewrite IHHcp2; auto.
+
+    - (* Proc_InTyp *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp as Hcp'.
+      rewrite senv_valid_cons in Hcp'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+
+        (* Specialize (IHHcp *)
+        specialize (IHHcp x t Hneq Hallow).
+        cbn in IHHcp.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
+        2: tauto.
+        rewrite eqb_refl in IHHcp.
+        constructor; auto.
+        * fold (senv_rename gamma x t).
+          rewrite senv_rename_snd.
+          auto.
+
+      + (* Case 2: s in gamma or s not a channel *)
+        specialize (IHHcp s t Hneq Hallow).
+        cbn in IHHcp.
+        replace (eqb x s) with false in IHHcp by (symmetry; rewrite eqb_neq; auto).
+        destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+        -- left; split; auto.
+           constructor; auto.
+           fold (senv_rename gamma s t).
+           rewrite senv_rename_snd.
+           auto.
+        -- right; split; auto.
+           rewrite IHHcp2; auto.
+
+    - (* Proc_OutUnit *)
+      cbn; intros s t Hneq _.
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto; constructor.
+      + right; split; auto; tauto.
+
+    - (* Proc_InUnit *)
+      cbn; intros s t Hneq Hallow.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        fold (senv_rename gamma x t).
+        rewrite senv_rename_nin; auto.
+        constructor; auto.
+        rewrite <- (cp_channels _ _ _ Hcp) in Hallow; auto.
+
+      + (* Case 2: s in gamma *)
+        match type of Hallow with context[if ?p then _ else _] => destruct p end.
+        * rewrite <- (cp_channels _ _ _ Hcp) in i.
+          left; split; auto.
+          cbn in Hallow.
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp s t Hneq ltac:(auto)).
+          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
+
+          constructor; auto.
+          rewrite map_map.
+          rewrite in_map_iff.
+          intros Hin.
+          destruct Hin as (z & Hz1 & Hz2).
+          destruct z.
+          destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
+          1: tauto.
+          apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+        * (* Case 3: s not a channel *)
+          rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          right; split; [tauto|].
+
+          (* Simplify IHHcp *)
+          specialize (IHHcp s t Hneq).
+          erewrite proc_forbidden_empty in IHHcp.
+          2: apply Hcp.
+          2: auto.
+          specialize (IHHcp ltac:(auto)).
+          destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)].
+          1: contradiction.
+          rewrite IHHcp; auto.
+
+    - (* Proc_EmptyCase *)
+      cbn [map fst In proc_forbidden proc_rename]; intros s t Hneq Hallow.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        cbn.
+        rewrite eqb_refl.
+        fold (senv_rename gamma x t).
+        rewrite senv_rename_nin; auto.
+
+        (* Simplify Hallow *)
+        match type of Hallow with context[if ?p then _ else _] => destruct p end.
+        2: cbn in n; tauto.
+        clear i.
+        rewrite filter_In in Hallow.
+        rewrite negb_eqb_true_iff in Hallow.
+        cbn in Hallow.
+        apply list_nin_helper in Hallow; auto.
+
+        constructor; auto.
+
+      + (* Case 2 : s in gamma *)
+        assert (n' : eqb x s = false) by (rewrite eqb_neq; auto).
+
+        match type of Hallow with context[if ?p then _ else _] => destruct p end.
+        * cbn in i; destruct i as [? | i]; [contradiction|].
+          rewrite filter_In in Hallow.
+          rewrite negb_eqb_true_iff in Hallow.
+          cbn in Hallow.
+          assert (Hallow' : x <> t /\ ~ In t (map fst gamma)) by tauto.
+
+          left; split; auto.
+          cbn.
+          rewrite n'.
+          fold (senv_rename gamma s t).
+          rewrite <- senv_rename_repl.
+
+          constructor.
+          -- (* nodup *)
+             unfold senv_rename.
+             rewrite map_map.
+             rewrite in_map_iff.
+             intros Hin.
+             destruct Hin as (z & Hz1 & Hz2).
+             destruct z.
+             destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
+             1: tauto.
+             apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+
+          -- (* senv_valid *)
+             apply senv_rename_nin_valid; auto.
+
+        * (* Case 3: s not a channel *)
+          cbn in n0.
+          right; split; auto.
+          rewrite <- senv_rename_repl.
+          rewrite senv_rename_nin; auto.
+
+    - (* Permutation *)
+      intros s t Hneq Hallow.
+      specialize (IHHcp s t Hneq Hallow).
+      destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+      + left; split.
+        * rewrite <- H; auto.
+        * eapply cp_perm.
+          1: apply IHHcp2.
+          unfold senv_rename.
+          apply Permutation_map; auto.
+      + right; split; auto.
+        intros Hin; apply IHHcp1.
+        rewrite H; auto.
+  Qed.
+
+  (* Precondition for replacing a propositional variable P with Q *)
+  Fixpoint proc_var_subst_pre (p : Process) (v : pvn) (v' : pvn) : Prop :=
+  match p with
+  | Proc_Link x y => True
+  | Proc_Comp x a p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_OutCh x y p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_InCh x y p => proc_var_subst_pre p v v'
+  | Proc_OutLeft x p => proc_var_subst_pre p v v'
+  | Proc_OutRight x p => proc_var_subst_pre p v v'
+  | Proc_InCase x p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_Server x y p => proc_var_subst_pre p v v'
+  | Proc_Client x y p => proc_var_subst_pre p v v'
+  | Proc_ClientNull x p => proc_var_subst_pre p v v'
+  | Proc_ClientSplit x y p => proc_var_subst_pre p v v'
+  | Proc_OutTyp x a w b p => ~ In v' (styp_forbidden b w) /\ ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v'
+  | Proc_InTyp x w p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
+  | Proc_OutUnit x => True
+  | Proc_InUnit x p => proc_var_subst_pre p v v'
+  | Proc_EmptyCase x l => True
+  end.
+
+  (* Replace a free type variable in a process with an expression *)
+  (* If v is a free variable in p, replace v with a. *)
+  (* if v is not a free variable in p, leave p unchanged *)
+  Fixpoint proc_var_subst (p : Process) (v : pvn) (e : STyp) : Process :=
+  match p with
+  | Proc_Link x y => Proc_Link x y
+  | Proc_Comp x a p q => Proc_Comp x (styp_subst v a e) (proc_var_subst p v e) (proc_var_subst q v e)
+  | Proc_OutCh x y p q => Proc_OutCh x y (proc_var_subst p v e) (proc_var_subst q v e)
+  | Proc_InCh x y p => Proc_InCh x y (proc_var_subst p v e)
+  | Proc_OutLeft x p => Proc_OutLeft x (proc_var_subst p v e)
+  | Proc_OutRight x p => Proc_OutRight x (proc_var_subst p v e)
+  | Proc_InCase x p q => Proc_InCase x (proc_var_subst p v e) (proc_var_subst q v e)
+  | Proc_Server x y p => Proc_Server x y (proc_var_subst p v e)
+  | Proc_Client x y p => Proc_Client x y (proc_var_subst p v e)
+  | Proc_ClientNull x p => Proc_ClientNull x (proc_var_subst p v e)
+  | Proc_ClientSplit x y p => Proc_ClientSplit x y (proc_var_subst p v e)
+  | Proc_OutTyp x a w b p => Proc_OutTyp x (styp_subst v a e) w (if pvn_eqb w v then b else styp_subst v b e) (proc_var_subst p v e)
+  | Proc_InTyp x w p => Proc_InTyp x w (if pvn_eqb w v then p else proc_var_subst p v e)
+  | Proc_OutUnit x => Proc_OutUnit x
+  | Proc_InUnit x p => Proc_InUnit x (proc_var_subst p v e)
+  | Proc_EmptyCase x l => Proc_EmptyCase x l
+  end.
+
+  Lemma cp_var_subst :
+  forall p v e gamma,
+  cp p gamma ->
+  Forall (fun r => Forall (fun v' => ~ In v' (styp_forbidden r v)) (fvar e)) (map snd gamma) ->
+  Forall (fun v' => proc_var_subst_pre p v v') (fvar e) ->
+  cp (proc_var_subst p v e) (map (fun r => (fst r, styp_subst v (snd r) e)) gamma).
+  Proof.
+    intros p v e gamma Hcp.
+    induction Hcp.
+    - (* Proc_Link *)
+      intros _ _; cbn.
+      rewrite <- styp_subst_dual.
+      constructor; auto.
+
+    - (* Proc_Comp *)
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite map_app, Forall_app in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+
+      (* Simplify Hpre2 *)
+      apply Forall_and_inv in Hpre2.
+      destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+      apply Forall_and_inv in Hpre2_2.
+      destruct Hpre2_2 as (Hpre2_2 & Hpre2_3).
+
+      (* Simplify IHHcp1 *)
+      cbn in IHHcp1.
+      rewrite Forall_cons_iff in IHHcp1.
+      specialize (IHHcp1 ltac:(split; auto) ltac:(auto)).
+
+      (* Simplify IHHcp2 *)
+      cbn in IHHcp2.
+      rewrite Forall_cons_iff in IHHcp2.
+      unfold styp_forbidden in IHHcp2.
+      rewrite <- styp_forbidden_dual in IHHcp2.
+      specialize (IHHcp2 ltac:(split; auto) ltac:(auto)).
+
+      rewrite map_app.
+      constructor; auto.
+      2: rewrite styp_subst_dual; auto.
+
+      (* disjointness *)
+      unfold senv_disjoint.
+      do 2 rewrite map_map; cbn.
+      auto.
+
+    - (* STyp_Times *)
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      rewrite map_app, Forall_app in Hpre1_2.
+      destruct Hpre1_2 as (Hpre1_2 & Hpre1_3).
+      cbn in Hpre1_1.
+      assert (Hpre1_1a : Forall (fun v' => ~ In v' (styp_forbidden a v)) (fvar e)) by (rewrite Forall_forall; rewrite Forall_forall in Hpre1_1; intros z; specialize (Hpre1_1 z); rewrite in_app_iff in Hpre1_1; tauto).
+      assert (Hpre1_1b : Forall (fun v' => ~ In v' (styp_forbidden b v)) (fvar e)) by (rewrite Forall_forall; rewrite Forall_forall in Hpre1_1; intros z; specialize (Hpre1_1 z); rewrite in_app_iff in Hpre1_1; tauto).
+
+      (* Simplify Hpre2 *)
+      apply Forall_and_inv in Hpre2.
+      destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+
+      (* Simplify IHHcp1 *)
+      cbn in IHHcp1.
+      rewrite Forall_cons_iff in IHHcp1.
+      specialize (IHHcp1 ltac:(split; auto) ltac:(auto)).
+
+      (* Simplify IHHcp2 *)
+      cbn in IHHcp2.
+      rewrite Forall_cons_iff in IHHcp2.
+      specialize (IHHcp2 ltac:(split; auto) ltac:(auto)).
+
+      rewrite map_app.
+      constructor; auto.
+
+      (* nodup *)
+      + rewrite map_map; cbn; auto.
+
+      (* disjointness *)
+      + unfold senv_disjoint.
+        do 2 rewrite map_map; cbn; auto.
+
+    - (* Proc_InCh *)
+      admit.
+
+    - (* Proc_OutLeft *)
+      admit.
+
+    - (* Proc_OutRight *)
+      admit.
+
+    - (* Proc_InCase *)
+      admit.
+
+    - (* Proc_Server *)
+      admit.
+
+    - (* Proc_Client *)
+      admit.
+
+    - (* Proc_ClientNull *)
+      admit.
+
+    - (* Proc_ClientSplit *)
+      admit.
+
+    - (* Proc_OutTyp *)
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify Hpre2 *)
+      apply Forall_and_inv in Hpre2.
+      destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+      apply Forall_and_inv in Hpre2_2.
+      destruct Hpre2_2 as (Hpre2_2 & Hpre2_3).
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+
+      destruct (pvn_eqb_spec v0 v).
+      + (* Case 1: v is the quantified variable *)
+        subst v.
+        match type of IHHcp with (?P /\ _) -> _ => assert (H0 : P) end.
+        { rewrite Forall_forall; intros z Hz.
+          rewrite Forall_forall in Hpre2_1, Hpre2_2.
+          apply styp_subst_forbidden; auto.
+        }
+        specialize (IHHcp ltac:(split; auto) ltac:(auto)).
+        constructor; auto.
+
+        (* If z is a free variable in (styp_subst v0 a e),
+           it must either be a free variable in a (excluding v0), or it is a free variable in e.
+           The first case is covered by H.
+           The second case is covered by Hpre2_1.
+         *)
+        * rewrite Forall_forall; rewrite Forall_forall in H, Hpre2_1.
+          intros z Hz.
+          apply var_free_subst in Hz.
+          destruct Hz as [(Hz & _) | Hz].
+          -- specialize (H _ Hz); auto.
+          -- specialize (Hpre2_1 _ Hz); auto.
+
+        (* styp_subst v0 b (styp_subst v0 a e) = styp_subst v0 (styp_subst v0 b a) e *)
+        * rewrite styp_subst_distr2; auto.
+
+      + (* Case 2: v is not the quantified variable *)
+        match type of IHHcp with (?P /\ _) -> _ => assert (H0 : P) end.
+        { rewrite Forall_forall; intros z Hz.
+          rewrite Forall_forall in Hpre1_1, Hpre2_1, Hpre2_2.
+          specialize (Hpre1_1 _ Hz); specialize (Hpre2_1 _ Hz); specialize (Hpre2_2 _ Hz).
+          pose proof (styp_forbidden_incl b v [] [v0] ltac:(apply incl_nil_l)).
+          apply styp_subst_forbidden; auto.
+        }
+        specialize (IHHcp ltac:(split; auto) ltac:(auto)).
+
+        constructor.
+
+        (* If v does not appear free in b, then (styp_subst v b e) = b.
+           In this case we simply show that all free variables that appear in (styp_subst v a e) can replace v0 in b.
+           This is same as above and covered by H and Hpre2_1.
+
+           If v appears free in b, then e cannot contain variable v0 by Hpre1_1.
+           In this case we can show that (styp_forbidden (styp_subst v b e) v0) = (styp_forbidden b v0).
+         *)
+        * destruct (in_dec pvn_eq_dec v (fvar b)).
+          -- assert (Hnin : ~ In v0 (fvar e)).
+             { intros Hin; rewrite Forall_forall in Hpre1_1.
+               apply Hpre1_1 in Hin.
+               pose proof (styp_forbidden_bound b v v0 [v0] ltac:(auto) ltac:(left; auto)).
+               auto.
+             }
+             unfold styp_forbidden; rewrite styp_forbidden_subst_no_free; auto.
+             rewrite Forall_forall; intros z Hz.
+             apply var_free_subst in Hz.
+             rewrite Forall_forall in H, Hpre2_1.
+             destruct Hz as [(Hz & _) | Hz]; auto.
+
+          -- rewrite styp_subst_no_free_ident; auto.
+             rewrite Forall_forall; intros z Hz.
+             apply var_free_subst in Hz.
+             rewrite Forall_forall in H, Hpre2_1.
+             destruct Hz as [(Hz & _) | Hz]; auto.
+
+        (* styp_subst v0 (styp_subst v b e) (styp_subst v a e) = styp_subst v (styp_subst v0 b a) e) *)
+        * rewrite styp_subst_distr1; auto.
+
+    - (* STyp_Forall *)
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      cbn in Hpre1_1.
+
+      (* Simplify IHHcp *)
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+
+      destruct (pvn_eqb_spec v0 v).
+      + (* Case 1: v is the quantified variable *)
+        subst v; clear Hpre2.
+        (* v0 cannot appear free in any term in gamma *)
+        erewrite map_ext_in.
+        Unshelve.
+        3: exact id.
+        2: { intros t Hin.
+             rewrite Forall_forall in H.
+             destruct t; cbn.
+             specialize (H s ltac:(rewrite in_map_iff; eexists; split; try apply Hin; auto)).
+             rewrite styp_subst_no_free_ident; auto.
+        }
+        rewrite map_id; constructor; auto.
+
+      + (* Case 2: v is not the quantified variable *)
+        apply Forall_and_inv in Hpre2.
+        destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+        match type of IHHcp with (?P /\ _) -> _ => assert (H0 : P) end.
+        { rewrite Forall_forall; rewrite Forall_forall in Hpre1_1.
+          intros z Hz; specialize (Hpre1_1 _ Hz).
+          pose proof (styp_forbidden_incl a v [] [v0] ltac:(apply incl_nil_l)) as Hincl.
+          intros Hin; apply Hincl in Hin; contradiction.
+        }
+        specialize (IHHcp ltac:(split; auto) ltac:(auto)).
+
+        constructor; auto.
+        rewrite map_map; cbn.
+        rewrite Forall_forall; intros r Hr.
+        rewrite in_map_iff in Hr.
+        destruct Hr as (z & Hz1 & Hz2); subst r.
+        rewrite Forall_forall in H.
+        specialize (H (snd z) ltac:(rewrite in_map_iff; eexists; split; try apply Hz2; auto)).
+        intros Hin.
+        apply var_free_subst in Hin.
+        destruct Hin as [(Hin & _) | Hin]; [contradiction|].
+        rewrite Forall_forall in Hpre2_1.
+        specialize (Hpre2_1 _ Hin); contradiction.
+
+    - (* STyp_One *)
+      cbn; intros _ _; constructor.
+
+    - (* STyp_Bot *)
+      admit.
+
+    - (* STyp_Top *)
+      cbn.
+      admit.
+
+    - (* Permutation *)
+      intros Hpre1 Hpre2.
+      rewrite <- H in Hpre1.
+      specialize (IHHcp Hpre1 Hpre2).
+      eapply cp_perm.
+      1: apply IHHcp.
+      apply Permutation_map; auto.
+  Admitted.
+
+  End Process.
+
+  Section Transformation.
+
+  #[local] Notation eqb := chn_eqb.
+  #[local] Notation eq_dec := chn_eq_dec.
+  #[local] Notation eqb_spec := chn_eqb_spec.
+  #[local] Notation eqb_refl := chn_eqb_refl.
+  #[local] Notation eqb_neq := chn_eqb_neq.
+
+  Lemma cp_inv_link :
+  forall w x senv,
+  cp (Proc_Link w x) senv ->
+  exists a, Permutation [(w, dual a); (x, a)] senv.
+  Proof.
+    intros w x senv Hcp.
+    remember (Proc_Link w x) as r.
+    revert w x Heqr.
+    induction Hcp; try discriminate.
+    - intros w' x'; intros Heq; injection Heq; intros; subst w' x'.
+      exists a; apply Permutation_refl.
+    - intros w' x'; intros Heq; specialize (IHHcp _ _ Heq).
+      destruct IHHcp as (a & IHHcp); exists a.
+      eapply Permutation_trans; [apply IHHcp | auto].
+  Qed.
+
+  Lemma cp_inv_comp :
+  forall x a p q senv,
+  cp (Proc_Comp x a p q) senv ->
+  exists gamma delta,
+  senv_disjoint gamma delta /\
+  cp p ((x, a) :: gamma) /\
+  cp q ((x, dual a) :: delta) /\
+  Permutation (gamma ++ delta) senv.
+  Proof.
+    intros x a p q senv Hcp.
+    remember (Proc_Comp x a p q) as r.
+    revert x a p q Heqr.
+    induction Hcp; try discriminate.
+    - intros x' a' p' q'; intros Heq; injection Heq; intros; subst x' a' p' q'.
+      exists gamma; exists delta; repeat split; auto; apply Permutation_refl.
+    - intros x' a' p' q'; intros Heq; specialize (IHHcp _ _ _ _ Heq).
+      destruct IHHcp as (senv1 & senv2 & IHHcp); exists senv1; exists senv2.
+      repeat split; try apply IHHcp.
+      eapply Permutation_trans; [apply IHHcp | auto].
+  Qed.
+
+  Lemma proc_swap' :
+  forall x a p q senv,
+  cp (Proc_Comp x a p q) senv ->
+  cp (Proc_Comp x (dual a) q p) senv.
+  Proof.
+    intros x a p q senv Hcp.
+    destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma & delta & Hcp1 & Hcp2 & Hcp3 & Hcp4).
+    assert (Hperm : Permutation (delta ++ gamma) senv).
+    { eapply Permutation_trans.
+      2: apply Hcp4.
+      apply Permutation_app_comm.
+    }
+    eapply cp_perm.
+    2: apply Hperm.
+
+    constructor; auto.
+    - (* disjointness *)
+      unfold senv_disjoint.
+      unfold senv_disjoint in Hcp1.
+      intros m Hin1 Hin2; eapply Hcp1; [apply Hin2 | apply Hin1].
+
+    - (* cp q *)
+      rewrite dual_involute; auto.
+  Qed.
+
+  Lemma proc_swap :
+  forall x a p q senv,
+  cp (Proc_Comp x a p q) senv <->
+  cp (Proc_Comp x (dual a) q p) senv.
+  Proof.
+    split.
+    1: apply proc_swap'.
+    intros Hcp.
+    apply proc_swap' in Hcp.
+    rewrite dual_involute in Hcp.
+    auto.
+  Qed.
+
+  Lemma proc_assoc_1 :
+  forall x y a b p q r senv,
+  In y (proc_channels q) ->
+  ~ In x (proc_channels r) ->
+  cp (Proc_Comp y b (Proc_Comp x a p q) r) senv ->
+  cp (Proc_Comp x a p (Proc_Comp y b q r)) senv.
+  Proof.
+    intros x y a b p q r senv Hy1 Hy2 Hcp.
+    destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma_delta & theta & Hcp1 & Hcp2 & Hcp3 & Hcp4).
+    destruct (cp_inv_comp _ _ _ _ _ Hcp2) as (gamma & delta_y & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
+
+    (* y is in either gamma or delta_y *)
+    assert (Hy3 : In (y, b) ((y, b) :: gamma_delta)) by (left; auto).
+    eapply Permutation_in in Hy3.
+    2: apply Permutation_sym; apply Hcp'4.
+    rewrite in_app_iff in Hy3.
+
+    (* y cannot be same as x *)
+    assert (Hy4 : x <> y).
+    { apply cp_senv_valid in Hcp'2, Hcp'3.
+      rewrite senv_valid_cons in Hcp'2, Hcp'3.
+      intros Heq; subst y.
+      destruct Hy3 as [Hy3 | Hy3].
+      all: match type of Hy3 with In (?x, ?b) ?l => assert (Hx : In x (map fst l)) by (rewrite in_map_iff; eexists; split; try apply Hy3; auto) end.
+      all: tauto.
+    }
+
+    (* Simplify Hy1 *)
+    rewrite <- (cp_channels _ _ _ Hcp'3) in Hy1.
+    cbn in Hy1.
+    destruct Hy1 as [? | Hy1]; [tauto|].
+
+    (* Since y is in delta_y, it cannot be in gamma *)
+    destruct Hy3 as [Hy3 | Hy3].
+    2: clear Hy1.
+    1: { unfold senv_disjoint in Hcp'1.
+         specialize (Hcp'1 y ltac:(rewrite in_map_iff; eexists; split; try apply Hy3; auto)).
+         contradiction.
+    }
+
+    (* Simplify Hy2 *)
+    rewrite <- (cp_channels _ _ _ Hcp3) in Hy2.
+    cbn in Hy2.
+
+    (* delta_y is a permutation of y :: delta *)
+    pose proof (in_split_perm _ _ Hy3) as (delta & Hy5).
+
+    (* gamma_delta is a permutation of gamma ++ delta *)
+    eapply Permutation_app_head in Hy5 as Hy6.
+    Unshelve.
+    2: exact gamma.
+    rewrite Hcp'4 in Hy6.
+    rewrite <- Permutation_middle in Hy6.
+    apply Permutation_cons_inv in Hy6.
+
+    (* Permute signature of q to y :: x :: delta *)
+    assert (Hcp'5 : cp q ((y, b) :: (x, dual a) :: delta)).
+    { eapply cp_perm.
+      1: apply Hcp'3.
+      rewrite Hy5.
+      apply perm_swap.
+    }
+
+    (* Now (Proc_Comp y b q r) can be typed as x :: delta ++ theta *)
+    assert (Hcp''1 : cp (Proc_Comp y b q r) (((x, dual a) :: delta) ++ theta)).
+    { constructor; auto.
+      unfold senv_disjoint.
+      cbn.
+      intros m Hm.
+      destruct Hm as [Hm | Hm].
+      - subst m; tauto.
+      - unfold senv_disjoint in Hcp1.
+        apply Hcp1.
+        rewrite Hy6.
+        rewrite map_app; rewrite in_app_iff; right; auto.
+    }
+    cbn in Hcp''1.
+
+    (* Now (Proc_Comp x a p (Proc_Comp y b q r)) can be typed as gamma ++ (delta ++ theta) *)
+    assert (Hcp''2 : cp (Proc_Comp x a p (Proc_Comp y b q r)) (gamma ++ (delta ++ theta))).
+    { constructor; auto.
+      unfold senv_disjoint.
+      intros m Hm1 Hm2.
+      rewrite map_app in Hm2.
+      rewrite in_app_iff in Hm2.
+      destruct Hm2 as [Hm2 | Hm2].
+      - (* m in both gamma, delta *)
+        apply cp_senv_valid in Hcp2.
+        rewrite senv_valid_cons in Hcp2.
+        unfold senv_valid in Hcp2.
+        destruct Hcp2 as (_ & Hcp2).
+        eapply Permutation_NoDup in Hcp2.
+        2: apply Permutation_map; apply Hy6.
+        rewrite map_app in Hcp2.
+        eapply NoDup_disjoint in Hcp2.
+        2: apply Hm1.
+        contradiction.
+      - (* m in both gamma, theta *)
+        unfold senv_disjoint in Hcp1.
+        revert Hm2; apply Hcp1.
+        rewrite Hy6.
+        rewrite map_app; rewrite in_app_iff; left; auto.
+    }
+
+    (* gamma ++ delta ++ theta is a permutation of senv *)
+    eapply cp_perm.
+    1: apply Hcp''2.
+    rewrite app_assoc.
+    rewrite <- Hy6.
+    auto.
+  Qed.
+
+  Lemma proc_assoc_2 :
+  forall x y a b p q r senv,
+  In x (proc_channels q) ->
+  ~ In y (proc_channels p) ->
+  cp (Proc_Comp x a p (Proc_Comp y b q r)) senv ->
+  cp (Proc_Comp y b (Proc_Comp x a p q) r) senv.
+  Admitted.
+
+  Lemma proc_assoc_3 :
+  forall x y a b p q r senv,
+  In y (proc_channels p) ->
+  ~ In x (proc_channels r) ->
+  cp (Proc_Comp y b (Proc_Comp x a p q) r) senv ->
+  cp (Proc_Comp x (dual a) q (Proc_Comp y b p r)) senv.
+  Proof.
+    intros x y a b p q r senv Hy1 Hy2 Hcp.
+
+    apply proc_swap in Hcp as Hcp1.
+    apply proc_assoc_2 in Hcp1 as Hcp2; auto.
+    apply proc_swap in Hcp2 as Hcp3.
+
+    destruct (cp_inv_comp _ _ _ _ _ Hcp3) as (gamma & delta & Hcp3_1 & Hcp3_2 & Hcp3_3 & Hcp3_4).
+    rewrite dual_involute in Hcp3_3.
+    apply proc_swap in Hcp3_3 as Hcp4.
+
+    eapply cp_perm.
+    2: apply Hcp3_4.
+    constructor; auto.
+    rewrite dual_involute; auto.
+  Qed.
+
+  Lemma proc_assoc_4 :
+  forall x y a b p q r senv,
+  In x (proc_channels r) ->
+  ~ In y (proc_channels p) ->
+  cp (Proc_Comp x a p (Proc_Comp y b q r)) senv ->
+  cp (Proc_Comp y (dual b) (Proc_Comp x a p r) q) senv.
+  Admitted.
+
+  End Transformation.
+
+End Wadler.
