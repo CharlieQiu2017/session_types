@@ -716,6 +716,19 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     apply NoDup_app; auto.
   Qed.
 
+  Lemma senv_app : forall senv1 senv2,
+  senv_valid (senv1 ++ senv2) ->
+  senv_valid senv1 /\ senv_valid senv2 /\ senv_disjoint senv1 senv2.
+  Proof.
+    intros senv1 senv2 Hval.
+    unfold senv_valid in Hval.
+    rewrite map_app in Hval.
+    repeat split.
+    - eapply NoDup_app_remove_r; apply Hval.
+    - eapply NoDup_app_remove_l; apply Hval.
+    - unfold senv_disjoint; apply NoDup_disjoint; auto.
+  Qed.
+
   Definition str_list_repl (l : list chn) (s : chn) (t : chn) :=
   map (fun x => if eqb x s then t else x) l.
 
@@ -918,6 +931,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_Client (x : chn) (y : chn) (p : Process)
   | Proc_ClientNull (x : chn) (p : Process)
   | Proc_ClientSplit (x : chn) (y : chn) (p : Process)
+  | Proc_CompAndSplit (x : chn) (a : STyp) (l : list chn) (p : Process) (q : Process)
   | Proc_OutTyp (x : chn) (a : STyp) (v : pvn) (t : STyp) (p : Process)
   | Proc_InTyp (x : chn) (v : pvn) (t : STyp) (p : Process)
   | Proc_OutUnit (x : chn)
@@ -939,6 +953,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_Client x y p => x :: filter (fun s => negb (eqb y s)) (proc_channels p)
   | Proc_ClientNull x p => x :: (proc_channels p)
   | Proc_ClientSplit x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_CompAndSplit x a l p q => filter (fun s => negb (eqb x s)) (proc_channels p ++ proc_channels q)
   | Proc_OutTyp x a _ _ p => proc_channels p
   | Proc_InTyp x v t p => proc_channels p
   | Proc_OutUnit x => [x]
@@ -950,7 +965,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   (* Otherwise, return [] *)
   Fixpoint proc_forbidden (p : Process) (s : chn) :=
   match p with
-  | Proc_Const _ l => if in_dec eq_dec s l then filter (fun s' => negb (eqb s' s)) l else []
+  | Proc_Const _ l => if in_dec eq_dec s l then l else []
   | Proc_Link x y => if eqb x s then [y] else if eqb y s then [x] else []
   | Proc_Comp x a p q =>
       let gamma := filter (fun s => negb (eqb x s)) (proc_channels p) in
@@ -974,6 +989,10 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       let gamma := proc_channels p in
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
   | Proc_ClientSplit x y p => if eqb y s then [] else proc_forbidden p s
+  | Proc_CompAndSplit x a l p q =>
+      let delta1 := filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p) in
+      let delta2 := filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels q) in
+      if eqb x s then [] else if in_dec eq_dec s l then (proc_forbidden p s) ++ (proc_forbidden q s) else if in_dec eq_dec s delta1 then (proc_forbidden p s) ++ delta2 else if in_dec eq_dec s delta2 then delta1 ++ (proc_forbidden q s) else []
   | Proc_OutTyp x a _ _ p => proc_forbidden p s
   | Proc_InTyp x v _ p => proc_forbidden p s
   | Proc_OutUnit x => []
@@ -981,7 +1000,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       let gamma := proc_channels p in
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
   | Proc_EmptyCase x l =>
-      if in_dec eq_dec s (x :: l) then filter (fun t => negb (eqb s t)) (x :: l) else []
+      if in_dec eq_dec s (x :: l) then (x :: l) else []
   end.
 
   Inductive cp : Process -> SEnv -> Prop :=
@@ -1040,6 +1059,13 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     forall x y a p gamma,
       cp p ((x, STyp_Ques a) :: (y, STyp_Ques a) :: gamma) ->
       cp (Proc_ClientSplit x y p) ((x, STyp_Ques a) :: gamma)
+  | cp_cut_contract :
+    forall x a p q gamma delta1 delta2,
+      Forall (fun r => match r with STyp_Ques _ => True | _ => False end) (map snd gamma) ->
+      senv_disjoint delta1 delta2 ->
+      cp p ((x, a) :: gamma ++ delta1) ->
+      cp q ((x, dual a) :: gamma ++ delta2) ->
+      cp (Proc_CompAndSplit x a (map fst gamma) p q) (gamma ++ delta1 ++ delta2)
   | cp_exists :
     forall x v a b p gamma,
       Forall (fun v' => ~ In v' (styp_forbidden b v)) (fvar a) ->
@@ -1095,6 +1121,17 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     - rewrite senv_valid_cons in IHHcp; cbn in IHHcp.
       rewrite senv_valid_cons in IHHcp.
       rewrite senv_valid_cons; tauto.
+    - rewrite senv_valid_cons in IHHcp1, IHHcp2.
+      destruct IHHcp1 as (_ & IHHcp1); destruct IHHcp2 as (_ & IHHcp2).
+      apply senv_app in IHHcp1, IHHcp2.
+      apply senv_disjoint_app_valid.
+      2: apply senv_disjoint_app_valid.
+      1,2,3,4: tauto.
+      destruct IHHcp1 as (_ & _ & IHHcp1).
+      destruct IHHcp2 as (_ & _ & IHHcp2).
+      unfold senv_disjoint; unfold senv_disjoint in IHHcp1, IHHcp2.
+      intros m Hm; specialize (IHHcp1 _ Hm); specialize (IHHcp2 _ Hm).
+      rewrite map_app; rewrite in_app_iff; tauto.
     - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
     - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
     - cbn; constructor; auto; constructor.
@@ -1231,6 +1268,25 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       split; [tauto|].
       intros Heq; subst x'.
       firstorder.
+
+    - (* Proc_CompAndSplit *)
+      cbn; intros x'.
+      do 2 rewrite map_app.
+      do 2 rewrite in_app_iff.
+      rewrite filter_In.
+      rewrite in_app_iff.
+      rewrite negb_eqb_true_iff.
+      cbn in IHHcp1, IHHcp2.
+      rewrite <- IHHcp1, <- IHHcp2.
+      do 2 rewrite map_app.
+      do 2 rewrite in_app_iff.
+
+      apply cp_senv_valid in Hcp1, Hcp2.
+      rewrite senv_valid_cons in Hcp1, Hcp2.
+      rewrite map_app, in_app_iff in Hcp1, Hcp2.
+      assert (H1 : In x' (map fst gamma) \/ In x' (map fst delta1) \/ In x' (map fst delta2) -> x <> x').
+      { intros Hin Heq; subst x'; tauto. }
+      tauto.
 
     - (* Proc_OutTyp x a p *)
       cbn; intros x'; rewrite <- IHHcp; cbn; split; auto.
@@ -1408,6 +1464,35 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       (* Hin assumes s <> x and s not in gamma, thus apply IH directly *)
       apply IHHcp; cbn; tauto.
 
+    - (* Proc_CompAndSplit *)
+      cbn; intros s Hin.
+
+      (* Simplify Hin *)
+      do 2 rewrite map_app in Hin.
+      do 2 rewrite in_app_iff in Hin.
+
+      (* Case 1: x = s *)
+      destruct (eqb_spec x s); auto.
+
+      (* Case 2: s in gamma *)
+      destruct (in_dec eq_dec s (map fst gamma)); [tauto|].
+
+      (* Case 3: s in delta1 *)
+      match goal with |- context[if ?p then _ else _] => destruct p end.
+      + rewrite filter_In in i.
+        rewrite <- (cp_channels _ _ _ Hcp1) in i.
+        cbn in i.
+        rewrite map_app, in_app_iff in i.
+        tauto.
+
+      + (* Case 4: s in delta2 *)
+        match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+        rewrite filter_In in i.
+        rewrite <- (cp_channels _ _ _ Hcp2) in i.
+        cbn in i.
+        rewrite map_app, in_app_iff in i.
+        tauto.
+
     - (* Proc_OutTyp x a p *)
       cbn; apply IHHcp.
     - (* Proc_InTyp x v p *)
@@ -1454,9 +1539,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       cbn; intros s t.
       rewrite combine_map_fst; auto.
       intros Hin Hin' Hneq.
-      destruct (in_dec eq_dec s l); try contradiction.
-      rewrite filter_In; split; auto.
-      rewrite negb_eqb_true_iff; auto.
+      destruct (in_dec eq_dec s l); try contradiction; auto.
 
     - (* Proc_Link *)
       cbn; intros s t.
@@ -1805,6 +1888,90 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
         intros Hin Hin' Hneq.
         apply (IHHcp s t ltac:(cbn; clear IHHcp; tauto) ltac:(cbn; clear IHHcp; tauto) Hneq).
 
+    - (* Proc_CompAndSplit *)
+      cbn; intros s t Hin Hin' Hneq.
+      (* x not in gamma, delta1, delta2 *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      rewrite map_app, in_app_iff in Hcp1', Hcp2'.
+
+      do 2 rewrite map_app in Hin, Hin'.
+      do 2 rewrite in_app_iff in Hin, Hin'.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      1: subst s; tauto.
+
+      (* Case 2: s in gamma *)
+      destruct (in_dec eq_dec s (map fst gamma)).
+      + cbn.
+        rewrite <- or_assoc in Hin'.
+        destruct Hin' as [Hin' | Hin'].
+        * specialize (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
+          rewrite in_app_iff; auto.
+        * specialize (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
+          rewrite in_app_iff; auto.
+
+      + (* Case 3: s in delta1 *)
+        match goal with |- context[if ?p then _ else _] => destruct p end.
+        * cbn.
+          rewrite in_app_iff.
+          rewrite filter_In.
+          rewrite <- (cp_channels _ _ _ Hcp2); cbn.
+          rewrite map_app, in_app_iff.
+          (* rewrite (or_comm (In t (map fst delta1))) in Hin'. *)
+          rewrite <- or_assoc in Hin'.
+
+          (* Simplify i *)
+          rewrite filter_In in i.
+          rewrite <- (cp_channels _ _ _ Hcp1) in i; cbn in i.
+          rewrite map_app, in_app_iff in i.
+
+          destruct Hin' as [Hin' | Hin'].
+          -- specialize (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) Hneq).
+             tauto.
+          -- destruct Hcp2' as (_ & Hcp2').
+             apply senv_app in Hcp2'.
+             destruct Hcp2' as (_ & _ & Hcp2').
+             unfold senv_disjoint in Hcp2'.
+             assert (~ In t (map fst gamma)) by (clear IHHcp1 IHHcp2; firstorder).
+             destruct (in_dec eq_dec t (map fst gamma)); tauto.
+
+        * (* Case 4: s in delta 2 *)
+          match goal with |- context[if ?p then _ else _] => destruct p end.
+          -- cbn.
+             rewrite in_app_iff.
+             rewrite filter_In.
+             rewrite <- (cp_channels _ _ _ Hcp1); cbn.
+             rewrite map_app, in_app_iff.
+             rewrite (or_comm (In t (map fst delta1))) in Hin'.
+             rewrite <- or_assoc in Hin'.
+
+             (* Simplify i *)
+             rewrite filter_In in i.
+             rewrite <- (cp_channels _ _ _ Hcp2) in i; cbn in i.
+             rewrite map_app, in_app_iff in i.
+
+             destruct Hin' as [Hin' | Hin'].
+             ++ specialize (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) Hneq).
+                tauto.
+             ++ destruct Hcp1' as (_ & Hcp1').
+             apply senv_app in Hcp1'.
+             destruct Hcp1' as (_ & _ & Hcp1').
+             unfold senv_disjoint in Hcp1'.
+             assert (~ In t (map fst gamma)) by (clear IHHcp1 IHHcp2; firstorder).
+             destruct (in_dec eq_dec t (map fst gamma)); tauto.
+
+          -- (* Case 5 : s not a channel *)
+             rewrite filter_In in n1, n2.
+             destruct (in_dec eq_dec s (map fst gamma)); try contradiction.
+             rewrite <- (cp_channels _ _ _ Hcp1) in n1.
+             rewrite <- (cp_channels _ _ _ Hcp2) in n2.
+             cbn in n1, n2.
+             rewrite map_app, in_app_iff in n1, n2.
+             tauto.
+
     - (* Proc_OutTyp *)
       cbn; auto.
     - (* Proc_InTyp *)
@@ -1841,9 +2008,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       match goal with |- context[if ?p then _ else _] => destruct p end.
       2: contradiction.
       intros _ Hin Hneq.
-      rewrite filter_In.
-      rewrite negb_eqb_true_iff.
-      split; auto.
+      auto.
 
     - (* Permutation *)
       intros s t Hin1 Hin2 Hneq.
@@ -1868,6 +2033,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_Client x y p => if eqb x s then Proc_Client t y p else if eqb y s then Proc_Client x y p else Proc_Client x y (proc_rename p s t)
   | Proc_ClientNull x p => if eqb x s then Proc_ClientNull t p else Proc_ClientNull x (proc_rename p s t)
   | Proc_ClientSplit x y p => if eqb y s then Proc_ClientSplit x y p else if eqb x s then Proc_ClientSplit t y (proc_rename p s t) else Proc_ClientSplit x y (proc_rename p s t)
+  | Proc_CompAndSplit x a l p q => if eqb x s then Proc_CompAndSplit x a l p q else Proc_CompAndSplit x a (str_list_repl l s t) (proc_rename p s t) (proc_rename q s t)
   | Proc_OutTyp x a v b p => if eqb x s then Proc_OutTyp t a v b (proc_rename p s t) else Proc_OutTyp x a v b (proc_rename p s t)
   | Proc_InTyp x v b p => if eqb x s then Proc_InTyp t v b (proc_rename p s t) else Proc_InTyp x v b (proc_rename p s t)
   | Proc_OutUnit x => if eqb x s then Proc_OutUnit t else Proc_OutUnit x
@@ -1880,8 +2046,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     intros p s.
     induction p.
     all: cbn; repeat match goal with |- context[eqb ?x ?y] => destruct (eqb_spec x y); try subst end; try congruence.
-    all: rewrite str_list_repl_ident; auto.
-  Qed.  
+    all: rewrite str_list_repl_ident; auto; congruence.
+  Qed.
 
   Lemma cp_proc_rename :
   forall p s t gamma,
@@ -1921,9 +2087,6 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
         2,3: rewrite map_id; auto.
         2: unfold str_list_repl; rewrite length_map; auto.
         apply str_list_repl_nodup; auto.
-        intros Hin; apply Hallow.
-        rewrite filter_In.
-        rewrite negb_eqb_true_iff; auto.
       + right; split; auto.
         rewrite str_list_repl_nin; auto.
 
@@ -2909,6 +3072,204 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
              right; split; [tauto|].
              rewrite IHHcp2; auto.
 
+    - (* Proc_CompAndSplit *)
+      cbn; intros s t Hneq Hallow.
+      (* senv_valid *)
+      apply cp_senv_valid in Hcp1 as Hcp1'.
+      apply cp_senv_valid in Hcp2 as Hcp2'.
+      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      rewrite map_app, in_app_iff in Hcp1', Hcp2'.
+      destruct Hcp1' as (Hcp1' & Hcp3).
+      destruct Hcp2' as (Hcp2' & Hcp4).
+      apply senv_app in Hcp3, Hcp4.
+
+      (* Case 1: s = x *)
+      destruct (eqb_spec x s).
+      + subst s; right; split; auto.
+        do 2 rewrite map_app, in_app_iff.
+        tauto.
+
+      + (* Case 2: s in gamma *)
+        destruct (in_dec eq_dec s (map fst gamma)).
+        * rewrite in_app_iff in Hallow.
+          specialize (IHHcp1 s t Hneq ltac:(tauto)).
+          specialize (IHHcp2 s t Hneq ltac:(tauto)).
+          cbn in IHHcp1, IHHcp2.
+          destruct (eqb_spec x s); try contradiction.
+          rewrite map_app, in_app_iff in IHHcp1, IHHcp2.
+          destruct IHHcp1 as [(_ & IHHcp1) | ?]; [|tauto].
+          destruct IHHcp2 as [(_ & IHHcp2) | ?]; [|tauto].
+          fold (senv_rename (gamma ++ delta1) s t) in IHHcp1.
+          fold (senv_rename (gamma ++ delta2) s t) in IHHcp2.
+
+          left; split.
+          1: rewrite map_app, in_app_iff; auto.
+          do 2 rewrite senv_rename_app.
+          rewrite senv_rename_app in IHHcp1, IHHcp2.
+          rewrite <- senv_rename_repl.
+          constructor; auto.
+          -- unfold senv_rename; rewrite map_map; cbn.
+             rewrite Forall_forall.
+             rewrite Forall_forall in H.
+             intros z Hz.
+             rewrite in_map_iff in Hz.
+             destruct Hz as (m & Hm1 & Hm2); subst z.
+             specialize (H _ ltac:(rewrite in_map_iff; eexists; split; try apply Hm2; auto)).
+             destruct m; destruct (eqb t0 s); cbn; auto.
+
+          -- assert (Hcp5 : senv_disjoint gamma delta1) by tauto.
+             assert (Hcp6 : senv_disjoint gamma delta2) by tauto.
+             unfold senv_disjoint in Hcp5, Hcp6.
+             specialize (Hcp5 _ i); specialize (Hcp6 _ i).
+             do 2 (rewrite senv_rename_nin; auto).
+
+        * (* Case 3: s in delta1 *)
+          match type of Hallow with context[if ?p then _ else _] => destruct p end.
+          -- rewrite in_app_iff in Hallow.
+             rewrite filter_In in Hallow.
+             rewrite negb_in_dec_true_iff in Hallow.
+             rewrite <- (cp_channels _ _ _ Hcp2) in Hallow.
+             cbn in Hallow.
+             rewrite map_app, in_app_iff in Hallow.
+
+             rewrite filter_In in i.
+             rewrite negb_in_dec_true_iff in i.
+             rewrite <- (cp_channels _ _ _ Hcp1) in i.
+             cbn in i.
+             rewrite map_app, in_app_iff in i.
+             assert (i' : In s (map fst delta1)) by tauto.
+
+             specialize (IHHcp1 s t Hneq ltac:(tauto)).
+             cbn in IHHcp1.
+             destruct (eqb_spec x s); try contradiction.
+             rewrite map_app, in_app_iff in IHHcp1.
+             destruct IHHcp1 as [(_ & IHHcp1) | ?]; [|tauto].
+             fold (senv_rename (gamma ++ delta1) s t) in IHHcp1.
+
+             unfold senv_disjoint in H0.
+             assert (~ In s (map fst delta2)) by (clear IHHcp2; firstorder).
+             specialize (IHHcp2 s t Hneq).
+             erewrite proc_forbidden_empty in IHHcp2.
+             2: apply Hcp2.
+             2: cbn; rewrite map_app, in_app_iff; tauto.
+             specialize (IHHcp2 ltac:(auto)).
+             cbn in IHHcp2.
+             destruct (eqb_spec x s); try contradiction.
+             rewrite map_app, in_app_iff in IHHcp2.
+             destruct IHHcp2 as [? | (_ & IHHcp2)]; [tauto|].
+
+             left; split.
+             1: do 2 rewrite map_app, in_app_iff; auto.
+             do 2 rewrite senv_rename_app.
+             rewrite senv_rename_app in IHHcp1.
+             rewrite (senv_rename_nin gamma s t) in IHHcp1; auto.
+             rewrite <- senv_rename_repl.
+             rewrite senv_rename_nin; auto.
+             rewrite (senv_rename_nin delta2 s t).
+             2: auto.
+             rewrite IHHcp2.
+
+             constructor; auto.
+             unfold senv_disjoint.
+             intros m Hm.
+             rewrite in_map_iff in Hm.
+             destruct Hm as (z & Hz1 & Hz2); subst m.
+             unfold senv_rename in Hz2.
+             rewrite in_map_iff in Hz2.
+             destruct Hz2 as (m & Hm1 & Hm2); subst z.
+             destruct m; destruct (eqb_spec t0 s); cbn; try subst.
+             2: apply H0; rewrite in_map_iff; eexists; split; try apply Hm2; auto.
+             intros Hin; apply Hallow; right.
+             split; auto.
+             unfold senv_disjoint in Hcp4; clear H0; firstorder.
+
+          -- (* Case 4: s in delta 2 *)
+             match type of Hallow with context[if ?p then _ else _] => destruct p end.
+             ++ rewrite in_app_iff in Hallow.
+                rewrite filter_In in Hallow.
+                rewrite negb_in_dec_true_iff in Hallow.
+                rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
+                cbn in Hallow.
+                rewrite map_app, in_app_iff in Hallow.
+
+                rewrite filter_In in i.
+                rewrite negb_in_dec_true_iff in i.
+                rewrite <- (cp_channels _ _ _ Hcp2) in i.
+                cbn in i.
+                rewrite map_app, in_app_iff in i.
+                assert (i' : In s (map fst delta2)) by tauto.
+
+                specialize (IHHcp2 s t Hneq ltac:(tauto)).
+                cbn in IHHcp2.
+                destruct (eqb_spec x s); try contradiction.
+                rewrite map_app, in_app_iff in IHHcp2.
+                destruct IHHcp2 as [(_ & IHHcp2) | ?]; [|tauto].
+                fold (senv_rename (gamma ++ delta2) s t) in IHHcp2.
+
+                unfold senv_disjoint in H0.
+                assert (~ In s (map fst delta1)) by (clear IHHcp1; firstorder).
+                specialize (IHHcp1 s t Hneq).
+                erewrite proc_forbidden_empty in IHHcp1.
+                2: apply Hcp1.
+                2: cbn; rewrite map_app, in_app_iff; tauto.
+                specialize (IHHcp1 ltac:(auto)).
+                cbn in IHHcp1.
+                destruct (eqb_spec x s); try contradiction.
+                rewrite map_app, in_app_iff in IHHcp1.
+                destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
+
+                left; split.
+                1: do 2 rewrite map_app, in_app_iff; auto.
+                do 2 rewrite senv_rename_app.
+                rewrite senv_rename_app in IHHcp2.
+                rewrite (senv_rename_nin gamma s t) in IHHcp2; auto.
+                rewrite <- senv_rename_repl.
+                rewrite senv_rename_nin; auto.
+                rewrite (senv_rename_nin delta1 s t).
+                2: auto.
+                rewrite IHHcp1.
+
+                constructor; auto.
+                unfold senv_disjoint.
+                intros m Hm.
+                rewrite in_map_iff.
+                intros Hin.
+                destruct Hin as (z & Hz1 & Hz2); subst m.
+                unfold senv_rename in Hz2.
+                rewrite in_map_iff in Hz2.
+                destruct Hz2 as (m & Hm1 & Hm2); subst z.
+                destruct m; destruct (eqb_spec t0 s); cbn; try subst.
+                2: cbn in Hm; apply (H0 _ Hm ltac:(rewrite in_map_iff; eexists; split; try apply Hm2; auto)).
+                apply Hallow; left; split; auto.
+                cbn in Hm.
+                unfold senv_disjoint in Hcp3; clear H0; firstorder.
+
+             ++ (* Case 5: s not a channel *)
+                rewrite filter_In in n1, n2.
+                rewrite negb_in_dec_true_iff in n1, n2.
+                rewrite <- (cp_channels _ _ _ Hcp1) in n1.
+                rewrite <- (cp_channels _ _ _ Hcp2) in n2.
+                cbn in n1, n2.
+                rewrite map_app, in_app_iff in n1, n2.
+
+                specialize (IHHcp1 s t Hneq).
+                specialize (IHHcp2 s t Hneq).
+                erewrite proc_forbidden_empty in IHHcp1, IHHcp2.
+                2: apply Hcp2.
+                3: apply Hcp1.
+                2,3: cbn; rewrite map_app, in_app_iff; tauto.
+                specialize (IHHcp1 ltac:(auto)).
+                specialize (IHHcp2 ltac:(auto)).
+                cbn in IHHcp1, IHHcp2.
+                rewrite map_app, in_app_iff in IHHcp1, IHHcp2.
+                destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
+                destruct IHHcp2 as [? | (_ & IHHcp2)]; [tauto|].
+
+                do 2 rewrite map_app, in_app_iff.
+                rewrite IHHcp1, IHHcp2.
+                rewrite str_list_repl_nin; [|tauto].
+                right; split; tauto.
+
     - (* Proc_OutTyp *)
       cbn; intros s t Hneq Hallow.
       (* senv_valid *)
@@ -3042,11 +3403,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
         match type of Hallow with context[if ?p then _ else _] => destruct p end.
         2: cbn in n; tauto.
         clear i.
-        rewrite filter_In in Hallow.
-        rewrite negb_eqb_true_iff in Hallow.
         cbn in Hallow.
-        apply list_nin_helper in Hallow; auto.
-
         constructor; auto.
 
       + (* Case 2 : s in gamma *)
@@ -3054,8 +3411,6 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
 
         match type of Hallow with context[if ?p then _ else _] => destruct p end.
         * cbn in i; destruct i as [? | i]; [contradiction|].
-          rewrite filter_In in Hallow.
-          rewrite negb_eqb_true_iff in Hallow.
           cbn in Hallow.
           assert (Hallow' : x <> t /\ ~ In t (map fst gamma)) by tauto.
 
@@ -3116,6 +3471,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_Client x y p => proc_var_subst_pre p v v'
   | Proc_ClientNull x p => proc_var_subst_pre p v v'
   | Proc_ClientSplit x y p => proc_var_subst_pre p v v'
+  | Proc_CompAndSplit x a l p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
   | Proc_OutTyp x a w b p => ~ In v' (styp_forbidden b w) /\ ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v'
   | Proc_InTyp x w _ p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
   | Proc_OutUnit x => True
@@ -3140,6 +3496,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   | Proc_Client x y p => Proc_Client x y (proc_var_subst p v e)
   | Proc_ClientNull x p => Proc_ClientNull x (proc_var_subst p v e)
   | Proc_ClientSplit x y p => Proc_ClientSplit x y (proc_var_subst p v e)
+  | Proc_CompAndSplit x a l p q => Proc_CompAndSplit x (styp_subst v a e) l (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_OutTyp x a w b p => Proc_OutTyp x (styp_subst v a e) w (if pvn_eqb w v then b else styp_subst v b e) (proc_var_subst p v e)
   | Proc_InTyp x w b p => Proc_InTyp x w (if pvn_eqb w v then b else styp_subst v b e) (if pvn_eqb w v then p else proc_var_subst p v e)
   | Proc_OutUnit x => Proc_OutUnit x
@@ -3394,6 +3751,44 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       specialize (IHHcp ltac:(repeat split; auto; intros z Hz; specialize (Hpre1_1 _ Hz); rewrite in_app_iff in Hpre1_1; tauto) Hpre2).
 
       constructor; auto.
+
+    - (* Proc_CompAndSplit *)
+      cbn; intros Hpre1 Hpre2.
+
+      (* Simplify Hpre1 *)
+      do 2 rewrite map_app in Hpre1.
+      do 2 rewrite Forall_app in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2 & Hpre1_3).
+
+      (* Simplify Hpre2 *)
+      apply Forall_and_inv in Hpre2.
+      destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+      apply Forall_and_inv in Hpre2_2.
+      destruct Hpre2_2 as (Hpre2_2 & Hpre2_3).
+
+      (* Simplify IHHcp1, IHHcp2 *)
+      cbn in IHHcp1, IHHcp2.
+      rewrite Forall_cons_iff in IHHcp1, IHHcp2.
+      rewrite map_app, Forall_app in IHHcp1, IHHcp2.
+      specialize (IHHcp1 ltac:(repeat split; auto) ltac:(auto)).
+      unfold styp_forbidden in IHHcp2; rewrite <- styp_forbidden_dual in IHHcp2.
+      specialize (IHHcp2 ltac:(repeat split; auto) ltac:(auto)).
+      rewrite map_app in IHHcp1, IHHcp2.
+
+      do 2 rewrite map_app.
+      eassert (H1 : map fst gamma = _).
+      2: rewrite H1; constructor; auto.
+      4: rewrite styp_subst_dual; auto.
+
+      + rewrite map_map; cbn; auto.
+      + rewrite map_map; cbn.
+        rewrite Forall_forall; intros r Hr.
+        rewrite in_map_iff in Hr.
+        destruct Hr as (z & Hz1 & Hz2); subst r.
+        rewrite Forall_forall in H.
+        specialize (H _ ltac:(rewrite in_map_iff; eexists; split; try apply Hz2; auto)).
+        destruct (snd z); try contradiction; cbn; auto.
+      + unfold senv_disjoint; intros m; do 2 rewrite map_map; cbn; auto.
 
     - (* Proc_OutTyp *)
       cbn; intros Hpre1 Hpre2.

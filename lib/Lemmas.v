@@ -26,6 +26,18 @@ Proof.
   split; auto.
 Qed.
 
+Lemma in_dec_true_iff : forall {T : Type} {eq_dec : forall (x y : T), {x = y} + {x <> y}} x l, (if in_dec eq_dec x l then true else false) = true <-> In x l.
+Proof.
+  intros T eq_dec x l.
+  destruct (in_dec eq_dec x l); split; try discriminate; tauto.
+Qed.
+
+Lemma negb_in_dec_true_iff : forall {T : Type} {eq_dec : forall (x y : T), {x = y} + {x <> y}} x l, (if in_dec eq_dec x l then false else true) = true <-> ~ In x l.
+Proof.
+  intros T eq_dec x l.
+  destruct (in_dec eq_dec x l); split; try discriminate; tauto.
+Qed.
+
 Lemma list_nin_helper : forall {T : Type} (x y : T) l, ~ In x l -> ~ ((x = y \/ In y l) /\ x <> y) -> ~ In y l.
 Proof.
   intros T x y l Hnin1 Hnin2.
