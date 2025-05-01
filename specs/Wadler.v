@@ -4,7 +4,9 @@
 From Stdlib Require Import
   List
   Structures.Equalities
-  Sorting.Permutation.
+  Sorting.Permutation
+  Setoid
+  Morphisms.
 From Session.lib Require Import
   Lemmas.
 Import
@@ -3968,6 +3970,14 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   #[local] Notation eqb_refl := chn_eqb_refl.
   #[local] Notation eqb_neq := chn_eqb_neq.
 
+  #[export] Instance cp_proper : Proper (Logic.eq ==> @Permutation (chn * STyp) ==> iff) (fun p senv => cp p senv).
+  Proof.
+    unfold Proper.
+    intros p p' Heq; subst p'.
+    intros senv1 senv2 Hperm.
+    split; intros Hcp; eapply cp_perm; try apply Hcp; auto; symmetry; auto.
+  Qed.
+
   Lemma cp_inv_link :
   forall w x senv,
   cp (Proc_Link w x) senv ->
@@ -3981,7 +3991,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
       exists a; apply Permutation_refl.
     - intros w' x'; intros Heq; specialize (IHHcp _ _ Heq).
       destruct IHHcp as (a & IHHcp); exists a.
-      eapply Permutation_trans; [apply IHHcp | auto].
+      rewrite IHHcp; auto.
   Qed.
 
   Lemma cp_inv_comp :
@@ -4002,7 +4012,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     - intros x' a' p' q'; intros Heq; specialize (IHHcp _ _ _ _ Heq).
       destruct IHHcp as (senv1 & senv2 & IHHcp); exists senv1; exists senv2.
       repeat split; try apply IHHcp.
-      eapply Permutation_trans; [apply IHHcp | auto].
+      rewrite <- H; apply IHHcp.
   Qed.
 
   Lemma proc_swap' :
@@ -4012,13 +4022,10 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   Proof.
     intros x a p q senv Hcp.
     destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma & delta & Hcp1 & Hcp2 & Hcp3 & Hcp4).
-    assert (Hperm : Permutation (delta ++ gamma) senv).
-    { eapply Permutation_trans.
-      2: apply Hcp4.
-      apply Permutation_app_comm.
-    }
+    pose proof Hcp4 as Hcp5.
+    rewrite Permutation_app_comm in Hcp5.
     eapply cp_perm.
-    2: apply Hperm.
+    2: apply Hcp5.
 
     constructor; auto.
     - (* disjointness *)
@@ -4056,8 +4063,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
 
     (* y is in either gamma or delta_y *)
     assert (Hy3 : In (y, b) ((y, b) :: gamma_delta)) by (left; auto).
-    eapply Permutation_in in Hy3.
-    2: apply Permutation_sym; apply Hcp'4.
+    rewrite <- Hcp'4 in Hy3.
     rewrite in_app_iff in Hy3.
 
     (* y cannot be same as x *)
@@ -4099,12 +4105,8 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
     apply Permutation_cons_inv in Hy6.
 
     (* Permute signature of q to y :: x :: delta *)
-    assert (Hcp'5 : cp q ((y, b) :: (x, dual a) :: delta)).
-    { eapply cp_perm.
-      1: apply Hcp'3.
-      rewrite Hy5.
-      apply perm_swap.
-    }
+    rewrite Hy5 in Hcp'3.
+    rewrite perm_swap in Hcp'3.
 
     (* Now (Proc_Comp y b q r) can be typed as x :: delta ++ theta *)
     assert (Hcp''1 : cp (Proc_Comp y b q r) (((x, dual a) :: delta) ++ theta)).
@@ -4134,8 +4136,7 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
         rewrite senv_valid_cons in Hcp2.
         unfold senv_valid in Hcp2.
         destruct Hcp2 as (_ & Hcp2).
-        eapply Permutation_NoDup in Hcp2.
-        2: apply Permutation_map; apply Hy6.
+        rewrite Hy6 in Hcp2.
         rewrite map_app in Hcp2.
         eapply NoDup_disjoint in Hcp2.
         2: apply Hm1.
@@ -4161,7 +4162,109 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   ~ In y (proc_channels p) ->
   cp (Proc_Comp x a p (Proc_Comp y b q r)) senv ->
   cp (Proc_Comp y b (Proc_Comp x a p q) r) senv.
-  Admitted.
+  Proof.
+    intros x y a b p q r senv Hx1 Hx2 Hcp.
+    destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma & delta_theta & Hcp1 & Hcp2 & Hcp3 & Hcp4).
+    destruct (cp_inv_comp _ _ _ _ _ Hcp3) as (delta_x & theta & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
+
+    (* x is in either delta_x or theta *)
+    assert (Hx3 : In (x, dual a) ((x, dual a) :: delta_theta)) by (left; auto).
+    rewrite <- Hcp'4 in Hx3.
+    rewrite in_app_iff in Hx3.
+
+    (* x cannot be same as y *)
+    assert (Hx4 : x <> y).
+    { apply cp_senv_valid in Hcp'2, Hcp'3.
+      rewrite senv_valid_cons in Hcp'2, Hcp'3.
+      intros Heq; subst x.
+      destruct Hx3 as [Hx3 | Hx3].
+      all: match type of Hx3 with In (?x, ?b) ?l => assert (Hy : In y (map fst l)) by (rewrite in_map_iff; eexists; split; try apply Hx3; auto) end.
+      all: tauto.
+    }
+
+    (* Simplify Hx1 *)
+    rewrite <- (cp_channels _ _ _ Hcp'2) in Hx1.
+    cbn in Hx1.
+    destruct Hx1 as [Hx1 | Hx1]; [symmetry in Hx1; tauto|].
+
+    (* Since x is in delta_x, it cannot be in theta *)
+    destruct Hx3 as [Hx3 | Hx3].
+    1: clear Hx1.
+    2: { unfold senv_disjoint in Hcp'1.
+         specialize (Hcp'1 x Hx1).
+         exfalso; apply Hcp'1.
+         rewrite in_map_iff; eexists; split; try apply Hx3; auto.
+    }
+
+    (* Simplify Hx2 *)
+    rewrite <- (cp_channels _ _ _ Hcp2) in Hx2.
+    cbn in Hx2.
+
+    (* delta_x is a permutation of x :: delta *)
+    pose proof (in_split_perm _ _ Hx3) as (delta & Hx5).
+
+    (* delta_theta is a permutation of delta ++ theta *)
+    eapply Permutation_app_tail in Hx5 as Hx6.
+    Unshelve.
+    2: exact theta.
+    cbn in Hx6.
+    rewrite Hcp'4 in Hx6.
+    apply Permutation_cons_inv in Hx6.
+
+    (* Permute signature of q to x :: y :: delta *)
+    rewrite Hx5 in Hcp'2.
+    rewrite perm_swap in Hcp'2.
+
+    (* Now (Proc_Comp x a p q) can be typed as y :: gamma ++ delta *)
+    assert (Hcp''1 : cp (Proc_Comp x a p q) (gamma ++ (y,b) :: delta)).
+    { constructor; auto.
+      unfold senv_disjoint.
+      cbn.
+      intros m Hm Hm'.
+      destruct Hm' as [Hm' | Hm'].
+      - subst m; tauto.
+      - unfold senv_disjoint in Hcp1.
+        eapply Hcp1.
+        1: apply Hm.
+        rewrite Hx6.
+        rewrite map_app; rewrite in_app_iff; left; auto.
+    }
+    eapply cp_perm in Hcp''1.
+    2: symmetry; apply Permutation_middle.
+
+    (* Now (Proc_Comp y b (Proc_Comp x a p q) r) can be typed as (gamma ++ delta) ++ theta *)
+    assert (Hcp''2 : cp (Proc_Comp y b (Proc_Comp x a p q) r) ((gamma ++ delta) ++ theta)).
+    { constructor; auto.
+      unfold senv_disjoint.
+      intros m Hm1 Hm2.
+      rewrite map_app in Hm1.
+      rewrite in_app_iff in Hm1.
+      destruct Hm1 as [Hm1 | Hm1].
+      - (* m in both gamma, theta *)
+        unfold senv_disjoint in Hcp1.
+        eapply Hcp1.
+        1: apply Hm1.
+        rewrite Hx6.
+        rewrite map_app; rewrite in_app_iff; right; auto.
+      - (* m in both delta, theta *)
+        apply cp_senv_valid in Hcp3.
+        rewrite senv_valid_cons in Hcp3.
+        unfold senv_valid in Hcp3.
+        destruct Hcp3 as (_ & Hcp3).
+        rewrite Hx6 in Hcp3.
+        rewrite map_app in Hcp3.
+        eapply NoDup_disjoint in Hcp3.
+        2: apply Hm1.
+        contradiction.
+    }
+
+    (* gamma ++ delta ++ theta is a permutation of senv *)
+    eapply cp_perm.
+    1: apply Hcp''2.
+    rewrite <- app_assoc.
+    rewrite <- Hx6.
+    auto.
+  Qed.
 
   Lemma proc_assoc_3 :
   forall x y a b p q r senv,
@@ -4192,7 +4295,22 @@ Module Wadler (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableTy
   ~ In y (proc_channels p) ->
   cp (Proc_Comp x a p (Proc_Comp y b q r)) senv ->
   cp (Proc_Comp y (dual b) (Proc_Comp x a p r) q) senv.
-  Admitted.
+  Proof.
+    intros x y a b p q r senv Hx1 Hx2 Hcp.
+
+    apply proc_swap in Hcp as Hcp1.
+    apply proc_assoc_1 in Hcp1 as Hcp2; auto.
+    apply proc_swap in Hcp2 as Hcp3.
+
+    destruct (cp_inv_comp _ _ _ _ _ Hcp3) as (gamma & delta & Hcp3_1 & Hcp3_2 & Hcp3_3 & Hcp3_4).
+    rewrite dual_involute in Hcp3_3.
+    apply proc_swap in Hcp3_2 as Hcp4.
+
+    eapply cp_perm.
+    2: apply Hcp3_4.
+    constructor; auto.
+    rewrite dual_involute; auto.
+  Qed.
 
   End Transformation.
 
