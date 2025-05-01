@@ -4,3 +4,6 @@
 *.glob
 *.aux
 *.cache
+Makefile.rocq
+Makefile.rocq.conf
+.Makefile.rocq.d
