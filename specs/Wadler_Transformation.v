@@ -15,7 +15,6 @@ Open Scope bool_scope.
 
 Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableType) (Import WT : Wadler_Types PropVarName) (Import WSE : Wadler_SEnv PropVarName ChannelName WT) (Import WPCS : Wadler_ProcConst_Sig PropVarName WT) (Import WP : Wadler_Proc PropVarName ChannelName WT WSE WPCS).
 
-  #[local] Notation pvn := PropVarName.t.
   #[local] Notation chn := ChannelName.t.
   #[local] Notation eqb := chn_eqb.
   #[local] Notation eq_dec := chn_eq_dec.
@@ -61,9 +60,72 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     revert x a p q Heqr.
     induction Hcp; try discriminate.
     - intros x' a' p' q'; intros Heq; injection Heq; intros; subst x' a' p' q'.
-      exists gamma; exists delta; repeat split; auto; apply Permutation_refl.
+      exists gamma; exists delta; repeat split; auto.
     - intros x' a' p' q'; intros Heq; specialize (IHHcp _ _ _ _ Heq).
       destruct IHHcp as (senv1 & senv2 & IHHcp); exists senv1; exists senv2.
+      repeat split; try apply IHHcp.
+      rewrite <- H; apply IHHcp.
+  Qed.
+
+  Lemma cp_inv_comp_and_split :
+  forall x a l p q senv,
+  cp (Proc_CompAndSplit x a l p q) senv ->
+  exists gamma delta1 delta2,
+  Forall (fun r => match r with STyp_Ques _ => True | _ => False end) (map snd gamma) /\
+  l = map fst gamma /\
+  senv_disjoint delta1 delta2 /\
+  cp p ((x, a) :: gamma ++ delta1) /\
+  cp q ((x, dual a) :: gamma ++ delta2) /\
+  Permutation (gamma ++ delta1 ++ delta2) senv.
+  Proof.
+    intros x a l p q senv Hcp.
+    remember (Proc_CompAndSplit x a l p q) as r.
+    revert x a l p q Heqr.
+    induction Hcp; try discriminate.
+    - intros x' a' l' p' q'; intros Heq; injection Heq; intros; subst x' a' l' p' q'.
+      exists gamma; exists delta1; exists delta2; repeat split; auto.
+    - intros x' a' l' p' q'; intros Heq; specialize (IHHcp _ _ _ _ _ Heq).
+      destruct IHHcp as (senv1 & senv2 & senv3 & IHHcp); exists senv1; exists senv2; exists senv3.
+      repeat split; try apply IHHcp.
+      rewrite <- H; apply IHHcp.
+  Qed.
+
+  Lemma cp_inv_outtyp :
+  forall x a v b p senv,
+  cp (Proc_OutTyp x a v b p) senv ->
+  exists gamma,
+    Forall (fun v' => ~ In v' (styp_forbidden b v)) (fvar a) /\
+    cp p ((x, styp_subst v b a) :: gamma) /\
+    Permutation ((x, STyp_Exists v b) :: gamma) senv.
+  Proof.
+    intros x a v b p senv Hcp.
+    remember (Proc_OutTyp x a v b p) as r.
+    revert x a v b p Heqr.
+    induction Hcp; try discriminate.
+    - intros x' a' v' b' p'; intros Heq; injection Heq; intros; subst x' a' v' b' p'.
+      exists gamma; repeat split; auto.
+    - intros x' a' v' b' p'; intros Heq; specialize (IHHcp _ _ _ _ _ Heq).
+      destruct IHHcp as (senv & IHHcp); exists senv.
+      repeat split; try apply IHHcp.
+      rewrite <- H; apply IHHcp.
+  Qed.
+
+  Lemma cp_inv_intyp :
+  forall x v a p senv,
+  cp (Proc_InTyp x v a p) senv ->
+  exists gamma,
+    Forall (fun r => ~ In v (fvar r)) (map snd gamma) /\
+    cp p ((x, a) :: gamma) /\
+    Permutation ((x, STyp_Forall v a) :: gamma) senv.
+  Proof.
+    intros x v a p senv Hcp.
+    remember (Proc_InTyp x v a p) as r.
+    revert x v a p Heqr.
+    induction Hcp; try discriminate.
+    - intros x' v' a' p'; intros Heq; injection Heq; intros; subst x' v' a' p'.
+      exists gamma; repeat split; auto.
+    - intros x' v' a' p'; intros Heq; specialize (IHHcp _ _ _ _ Heq).
+      destruct IHHcp as (senv & IHHcp); exists senv.
       repeat split; try apply IHHcp.
       rewrite <- H; apply IHHcp.
   Qed.
@@ -363,6 +425,97 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     2: apply Hcp3_4.
     constructor; auto.
     rewrite dual_involute; auto.
+  Qed.
+
+  Lemma proc_comp_and_split_empty :
+  forall x a p q senv,
+  cp (Proc_CompAndSplit x a [] p q) senv ->
+  cp (Proc_Comp x a p q) senv.
+  Proof.
+    intros x a p q senv Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & _ & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5).
+    symmetry in Hcp'1.
+    apply map_eq_nil in Hcp'1; subst gamma.
+    cbn in Hcp'3, Hcp'4, Hcp'5.
+    rewrite <- Hcp'5.
+    constructor; auto.
+  Qed.
+
+  Lemma proc_cut_forall_exists :
+  forall x t a v b p v' a' q senv,
+  cp (Proc_Comp x t (Proc_OutTyp x a v b p) (Proc_InTyp x v' a' q)) senv ->
+  t = STyp_Exists v b /\
+  v' = v /\
+  a' = dual b /\
+  (Forall (fun v'' => ~ In v'' (styp_forbidden a' v')) (fvar a) ->
+   Forall (fun v'' => proc_var_subst_pre q v' v'') (fvar a) ->
+   cp (Proc_Comp x (styp_subst v b a) p (proc_var_subst q v' a)) senv).
+  Proof.
+    intros x t a v b p v' a' q senv Hcp.
+    destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma & delta & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
+
+    (* Invert Hcp'2 *)
+    destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp'2) as (gamma' & Hcp''1 & Hcp''2 & Hcp''3).
+    pose proof Hcp'2 as Hcp''4.
+    apply cp_senv_valid in Hcp''4.
+    rewrite senv_valid_cons in Hcp''4.
+    assert (Hcp''5 : In (x, STyp_Exists v b) ((x, t) :: gamma)) by (rewrite <- Hcp''3; left; auto).
+    cbn in Hcp''5.
+    destruct Hcp''5 as [Hcp''5 | Hcp''5].
+    2: apply (in_map fst) in Hcp''5; cbn in Hcp''5; tauto.
+    injection Hcp''5; intros; subst t; clear Hcp''5.
+    apply Permutation_cons_inv in Hcp''3.
+
+    (* Invert Hcp'3 *)
+    destruct (cp_inv_intyp _ _ _ _ _ Hcp'3) as (delta' & Hcp'''1 & Hcp'''2 & Hcp'''3).
+    pose proof Hcp'3 as Hcp'''4.
+    apply cp_senv_valid in Hcp'''4.
+    rewrite senv_valid_cons in Hcp'''4.
+    cbn in Hcp'''3.
+    assert (Hcp'''5 : In (x, STyp_Forall v' a') ((x, STyp_Forall v (dual b)) :: delta)) by (rewrite <- Hcp'''3; left; auto).
+    cbn in Hcp'''5.
+    destruct Hcp'''5 as [Hcp'''5 | Hcp'''5].
+    2: apply (in_map fst) in Hcp'''5; cbn in Hcp'''5; tauto.
+    injection Hcp'''5; intros; subst v' a'; clear Hcp'''5.
+    apply Permutation_cons_inv in Hcp'''3.
+
+    repeat split; auto.
+    intros Hpre1 Hpre2.
+    pose proof (cp_var_subst _ v a _ Hcp'''2) as Hsubst.
+
+    match type of Hsubst with ?P -> _ => assert (H : P) end.
+    { cbn.
+      apply Forall_cons; auto.
+      rewrite Forall_forall.
+      rewrite Forall_forall in Hcp'''1.
+      intros z Hz.
+      specialize (Hcp'''1 _ Hz).
+      rewrite Forall_forall.
+      intros w _ Hw2.
+      unfold styp_forbidden in Hw2.
+      rewrite styp_forbidden_empty in Hw2; auto.
+    }
+    specialize (Hsubst ltac:(auto) ltac:(auto)); clear H.
+    cbn in Hsubst.
+
+    erewrite map_ext_in in Hsubst.
+    Unshelve.
+    3: exact id.
+    2: { intros z Hz.
+         destruct z; cbn.
+         rewrite Forall_forall in Hcp'''1.
+         specialize (Hcp'''1 _ ltac:(rewrite in_map_iff; eexists; split; try apply Hz; auto)).
+         cbn in Hcp'''1.
+         rewrite styp_subst_no_free_ident; auto.
+    }
+    rewrite map_id in Hsubst.
+
+    rewrite <- Hcp'4.
+    rewrite <- Hcp''3, <- Hcp'''3.
+    constructor; auto.
+    - unfold senv_disjoint.
+      intros m; rewrite Hcp''3, Hcp'''3; auto.
+    - rewrite styp_subst_dual; auto.
   Qed.
 
 End Wadler_Transformation.
