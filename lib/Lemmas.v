@@ -1,9 +1,18 @@
 From Stdlib Require Import
   List
   Strings.String
-  Sorting.Permutation.
+  Sorting.Permutation
+  Setoid
+  Morphisms.
 Import
   ListNotations.
+Open Scope bool_scope.
+
+Lemma false_true_False : false = true <-> False.
+Proof. split; auto; discriminate. Qed.
+
+Lemma true_false_False : true = false <-> False.
+Proof. split; [discriminate | contradiction]. Qed.
 
 Lemma str_eq_dec : forall (s1 s2 : string), {s1 = s2} + {s1 <> s2}.
 Proof.
@@ -55,6 +64,13 @@ Proof.
   subst l.
   exists (l1 ++ l2).
   apply Permutation_sym; apply Permutation_middle.
+Qed.
+
+Lemma in_dup : forall {T : Type} (x : T) l, In x (l ++ l) <-> In x l.
+Proof.
+  intros T x l.
+  rewrite in_app_iff.
+  tauto.
 Qed.
 
 Lemma NoDup_disjoint {T : Type} : forall (l1 l2 : list T), NoDup (l1 ++ l2) -> forall x, In x l1 -> ~ In x l2.
@@ -129,4 +145,193 @@ Proof.
     cbn in Hg1, Hg2.
     subst t u0.
     rewrite IHl1; auto.
+Qed.
+
+Lemma map_filter_nodup {T U : Type} :
+forall (f : T -> U) g (l : list T), NoDup (map f l) -> NoDup (map f (filter g l)).
+Proof.
+  intros f g l.
+  induction l.
+  - cbn; auto.
+  - cbn.
+    intros Hnodup.
+    inversion Hnodup as [|? ? Hnodup1 Hnodup2]; subst.
+    destruct (g a); [|auto].
+    cbn; constructor; auto.
+    intros Hin.
+    apply Hnodup1.
+    rewrite in_map_iff; rewrite in_map_iff in Hin.
+    destruct Hin as (x & Hx1 & Hx2).
+    rewrite filter_In in Hx2.
+    exists x; split; tauto.
+Qed.
+
+#[export] Instance filter_proper {T : Type} : Proper (Logic.eq ==> @Permutation T ==> @Permutation T) (fun f l => filter f l).
+Proof.
+  unfold Proper.
+  intros f f' Heq; subst f'.
+  intros l l' Hperm.
+  induction Hperm; cbn; repeat match goal with |- context[if ?p then _ else _] => destruct p end; auto.
+  - apply perm_swap.
+  - rewrite IHHperm1; auto.
+Qed.
+
+Lemma NoDup_filter_one {T : Type} {eqb : T -> T -> bool} (eqb_spec : forall x y, reflect (x = y) (eqb x y)) : forall x l, NoDup (x :: l) -> filter (fun s => negb (eqb x s)) (x :: l) = l.
+Proof.
+  intros x l Hnodup.
+  rewrite NoDup_cons_iff in Hnodup.
+  cbn.
+  destruct (eqb_spec x x); try contradiction; cbn.
+  apply forallb_filter_id.
+  rewrite forallb_forall; intros z Hz.
+  destruct (eqb_spec x z); auto; subst z; tauto.
+Qed.
+
+Lemma NoDup_filter_two {T : Type} {eqb : T -> T -> bool} (eqb_spec : forall x y, reflect (x = y) (eqb x y)) : forall x y l, NoDup (x :: y :: l) -> filter (fun s => negb (eqb x s) && negb (eqb y s)) (x :: y :: l) = l.
+Proof.
+  intros x y l Hnodup.
+  do 2 rewrite NoDup_cons_iff in Hnodup.
+  cbn in Hnodup.
+  cbn.
+  destruct (eqb_spec x x); try contradiction; cbn.
+  destruct (eqb_spec y y); try contradiction; cbn.
+  rewrite Bool.andb_false_r.
+  apply forallb_filter_id.
+  rewrite forallb_forall; intros z Hz.
+  destruct (eqb_spec x z); cbn.
+  1: subst z; tauto.
+  destruct (eqb_spec y z); cbn.
+  1: subst z; tauto.
+  auto.
+Qed.
+
+Lemma forallb_filter_nil {T : Type} : forall f (l : list T), forallb (fun x => negb (f x)) l = true -> filter f l = [].
+Proof.
+  intros f l.
+  induction l.
+  - cbn; auto.
+  - cbn; intros Htrue.
+    rewrite Bool.andb_true_iff in Htrue.
+    destruct Htrue as (Htrue1 & Htrue2).
+    rewrite Bool.negb_true_iff in Htrue1.
+    specialize (IHl Htrue2).
+    rewrite Htrue1; auto.
+Qed.
+
+Lemma NoDup_filter_app {T : Type} (eq_dec : forall x y, {x = y} + {x <> y}) : forall (l1 l2 : list T), NoDup (l1 ++ l2) -> filter (fun s => if in_dec eq_dec s l1 then false else true) (l1 ++ l2) = l2.
+Proof.
+  intros l1 l2 Hnodup.
+  rewrite filter_app.
+  rewrite forallb_filter_nil.
+  2: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z l1); try contradiction; auto.
+  cbn; apply forallb_filter_id.
+  rewrite forallb_forall.
+  intros z Hz.
+  pose proof (NoDup_disjoint _ _ Hnodup z) as Hnodup'.
+  destruct (in_dec eq_dec z l1); auto; tauto.
+Qed.  
+
+Lemma NoDup_eq_perm {T : Type} (l1 l2 : list T) : NoDup l1 -> NoDup l2 -> (forall x, In x l1 <-> In x l2) -> Permutation l1 l2.
+Proof.
+  revert l2.
+  induction l1.
+  - intros l2 _ _ Hl2.
+    destruct l2; auto.
+    specialize (Hl2 t).
+    destruct Hl2 as (_ & Hl2).
+    specialize (Hl2 ltac:(left; auto)).
+    contradiction.
+  - intros l2 Hnodup1 Hnodup2 Heq.
+    rewrite NoDup_cons_iff in Hnodup1.
+    specialize (Heq a) as Ha.
+    destruct Ha as (Ha & _).
+    specialize (Ha ltac:(left; auto)).
+    pose proof (in_split_perm _ _ Ha) as (l3 & Hl3).
+    rewrite Hl3 in Hnodup2.
+    rewrite NoDup_cons_iff in Hnodup2.
+    assert (H : forall x, In x l1 <-> In x l3).
+    { intros x; split.
+      - intros Hin.
+        specialize (Heq x).
+        destruct Heq as (Heq & _).
+        specialize (Heq ltac:(right; auto)).
+        rewrite Hl3 in Heq.
+        destruct Heq as [Heq | Heq]; auto.
+        subst x; tauto.
+      - intros Hin.
+        specialize (Heq x).
+        rewrite Hl3 in Heq.
+        destruct Heq as (_ & Heq).
+        specialize (Heq ltac:(right; auto)).
+        destruct Heq as [Heq | Heq]; auto.
+        subst x; tauto.
+    }
+    specialize (IHl1 l3 ltac:(apply Hnodup1) ltac:(apply Hnodup2) H).
+    rewrite Hl3, IHl1.
+    auto.
+Qed.
+
+Lemma filter_split {T : Type} (f : T -> bool) l : Permutation l ((filter f l) ++ (filter (fun x => negb (f x)) l)).
+Proof.
+  induction l.
+  - cbn; auto.
+  - cbn.
+    destruct (f a).
+    + cbn; auto.
+    + cbn; rewrite <- Permutation_middle; auto.
+Qed.
+
+Lemma map_filter {T U : Type} (f : U -> bool) (g : T -> U) l : map g (filter (fun x => let f := f in f (g x)) l) = filter (fun x => f x) (map g l).
+Proof.
+  cbn.
+  induction l.
+  - cbn; auto.
+  - cbn; destruct (f (g a)).
+    + cbn; rewrite IHl; auto.
+    + auto.
+Qed.
+
+Lemma map_permutation_ex {T U : Type} (f : T -> U) l l' : Permutation (map f l) l' -> exists l'', Permutation l l'' /\ l' = map f l''.
+Proof.
+  intros Hperm.
+  remember (map f l) as l''; revert l Heql''.
+  induction Hperm.
+  - intros l Hl; symmetry in Hl.
+    apply map_eq_nil in Hl; subst l.
+    exists []; split; auto.
+  - intros l'' Hl''.
+    destruct l''.
+    1: cbn in Hl''; discriminate.
+    cbn in Hl''.
+    injection Hl''; intros; subst l x.
+    specialize (IHHperm _ ltac:(reflexivity)).
+    destruct IHHperm as (l & Hl1 & Hl2).
+    exists (t :: l).
+    rewrite Hl1; cbn; split; subst l'; auto.
+  - intros l' Hl'.
+    do 2 (destruct l'; cbn in Hl'; try discriminate).
+    injection Hl'; intros; subst.
+    exists (t0 :: t :: l').
+    split; auto; apply perm_swap.
+  - intros l''' Hl'''; subst l.
+    specialize (IHHperm1 _ ltac:(reflexivity)).
+    destruct IHHperm1 as (l & Hl1 & Hl2); subst l'.
+    specialize (IHHperm2 _ ltac:(reflexivity)).
+    destruct IHHperm2 as (l' & Hl'1 & Hl'2); subst l''.
+    exists l'; split; auto.
+    rewrite Hl1; auto.
+Qed.
+
+Lemma in_app_app_iff {T : Type} (l1 l2 l3 : list T) : forall x, In x ((l1 ++ l2) ++ (l1 ++ l3)) <-> In x (l1 ++ l2 ++ l3).
+Proof.
+  intros x.
+  rewrite <- app_assoc.
+  rewrite (app_assoc l2).
+  rewrite (Permutation_app_comm l2).
+  rewrite <- (app_assoc l1).
+  rewrite app_assoc.
+  rewrite in_app_iff.
+  rewrite in_dup.
+  rewrite <- in_app_iff.
+  tauto.
 Qed.
