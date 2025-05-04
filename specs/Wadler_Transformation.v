@@ -542,18 +542,16 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Proof.
     intros z.
     unfold new_L1', theta_split_func, theta_name_split_func.
-    unfold new_L1, delta_split_func, delta_name_split_func.
-    do 2 rewrite filter_In.
+    rewrite filter_In.
     split.
     - intros Hin.
       destruct Hin as (Hin1 & Hin2).
       destruct (in_dec eq_dec (fst z) delta_channels); try discriminate; clear Hin2.
       rewrite delta_channels_def in i.
-      destruct (in_dec eq_dec (fst z) theta_channels).
-      2: rewrite theta_channels_def in n; apply (in_map fst) in Hin1; contradiction.
-      split; auto.
-      apply L2_prop_4; auto.
-    - intros Hin.
+      apply new_L1_prop; auto.
+    - unfold new_L1, delta_split_func, delta_name_split_func.
+      rewrite filter_In.
+      intros Hin.
       destruct Hin as (Hin1 & Hin2).
       destruct (in_dec eq_dec (fst z) theta_channels); try discriminate; clear Hin2.
       rewrite theta_channels_def in i.
