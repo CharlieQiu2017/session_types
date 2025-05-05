@@ -894,195 +894,103 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     apply Hcp'.
   Qed.
 
-  (*
   Lemma proc_assoc_2 :
-  forall x y a b p q r senv,
-  In x (proc_channels q) ->
-  ~ In y (proc_channels p) ->
-  cp (Proc_Comp x a p (Proc_Comp y b q r)) senv ->
-  cp (Proc_Comp y b (Proc_Comp x a p q) r) senv.
+  forall x y a b l1 l2 p q r senv,
+  In y (proc_channels p) ->
+  ~ In y l1 ->
+  ~ In x (proc_channels r) ->
+  cp (Proc_CompAndSplit y b l2 (Proc_CompAndSplit x a l1 p q) r) senv ->
+  let new_l1 := filter (delta_name_split_func y r) (delta_channels x y p) in
+  let new_l2 := filter (gamma_name_split_func x y p r) (gamma_channels x q) in
+  cp (Proc_CompAndSplit x (dual a) new_l2 q (Proc_CompAndSplit y b new_l1 p r)) senv.
   Proof.
-    intros x y a b p q r senv Hx1 Hx2 Hcp.
-    destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma & delta_theta & Hcp1 & Hcp2 & Hcp3 & Hcp4).
-    destruct (cp_inv_comp _ _ _ _ _ Hcp3) as (delta_x & theta & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
-
-    (* x is in either delta_x or theta *)
-    assert (Hx3 : In (x, dual a) ((x, dual a) :: delta_theta)) by (left; auto).
-    rewrite <- Hcp'4 in Hx3.
-    rewrite in_app_iff in Hx3.
-
-    (* x cannot be same as y *)
-    assert (Hx4 : x <> y).
-    { apply cp_senv_valid in Hcp'2, Hcp'3.
-      rewrite senv_valid_cons in Hcp'2, Hcp'3.
-      intros Heq; subst x.
-      destruct Hx3 as [Hx3 | Hx3].
-      all: match type of Hx3 with In (?x, ?b) ?l => assert (Hy : In y (map fst l)) by (rewrite in_map_iff; eexists; split; try apply Hx3; auto) end.
-      all: tauto.
-    }
-
-    (* Simplify Hx1 *)
-    rewrite <- (cp_channels _ _ _ Hcp'2) in Hx1.
-    cbn in Hx1.
-    destruct Hx1 as [Hx1 | Hx1]; [symmetry in Hx1; tauto|].
-
-    (* Since x is in delta_x, it cannot be in theta *)
-    destruct Hx3 as [Hx3 | Hx3].
-    1: clear Hx1.
-    2: { unfold senv_disjoint in Hcp'1.
-         specialize (Hcp'1 x Hx1).
-         exfalso; apply Hcp'1.
-         rewrite in_map_iff; eexists; split; try apply Hx3; auto.
-    }
-
-    (* Simplify Hx2 *)
-    rewrite <- (cp_channels _ _ _ Hcp2) in Hx2.
-    cbn in Hx2.
-
-    (* delta_x is a permutation of x :: delta *)
-    pose proof (in_split_perm _ _ Hx3) as (delta & Hx5).
-
-    (* delta_theta is a permutation of delta ++ theta *)
-    eapply Permutation_app_tail in Hx5 as Hx6.
-    Unshelve.
-    2: exact theta.
-    cbn in Hx6.
-    rewrite Hcp'4 in Hx6.
-    apply Permutation_cons_inv in Hx6.
-
-    (* Permute signature of q to x :: y :: delta *)
-    rewrite Hx5 in Hcp'2.
-    rewrite perm_swap in Hcp'2.
-
-    (* Now (Proc_Comp x a p q) can be typed as y :: gamma ++ delta *)
-    assert (Hcp''1 : cp (Proc_Comp x a p q) (gamma ++ (y,b) :: delta)).
-    { constructor; auto.
-      unfold senv_disjoint.
-      cbn.
-      intros m Hm Hm'.
-      destruct Hm' as [Hm' | Hm'].
-      - subst m; tauto.
-      - unfold senv_disjoint in Hcp1.
-        eapply Hcp1.
-        1: apply Hm.
-        rewrite Hx6.
-        rewrite map_app; rewrite in_app_iff; left; auto.
-    }
-    eapply cp_perm in Hcp''1.
-    2: symmetry; apply Permutation_middle.
-
-    (* Now (Proc_Comp y b (Proc_Comp x a p q) r) can be typed as (gamma ++ delta) ++ theta *)
-    assert (Hcp''2 : cp (Proc_Comp y b (Proc_Comp x a p q) r) ((gamma ++ delta) ++ theta)).
-    { constructor; auto.
-      unfold senv_disjoint.
-      intros m Hm1 Hm2.
-      rewrite map_app in Hm1.
-      rewrite in_app_iff in Hm1.
-      destruct Hm1 as [Hm1 | Hm1].
-      - (* m in both gamma, theta *)
-        unfold senv_disjoint in Hcp1.
-        eapply Hcp1.
-        1: apply Hm1.
-        rewrite Hx6.
-        rewrite map_app; rewrite in_app_iff; right; auto.
-      - (* m in both delta, theta *)
-        apply cp_senv_valid in Hcp3.
-        rewrite senv_valid_cons in Hcp3.
-        unfold senv_valid in Hcp3.
-        destruct Hcp3 as (_ & Hcp3).
-        rewrite Hx6 in Hcp3.
-        rewrite map_app in Hcp3.
-        eapply NoDup_disjoint in Hcp3.
-        2: apply Hm1.
-        contradiction.
-    }
-
-    (* gamma ++ delta ++ theta is a permutation of senv *)
-    eapply cp_perm.
-    1: apply Hcp''2.
-    rewrite <- app_assoc.
-    rewrite <- Hx6.
-    auto.
+    intros x y a b l1 l2 p q r senv Hy1 Hy2 Hy3 Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (old_cp_gamma & old_cp_delta1 & old_cp_delta2 & Hold_cp1 & Hold_cp2 & Hold_cp3 & Hold_cp4 & Hold_cp5 & Hold_cp6).
+    rewrite proc_swap in Hold_cp4.
+    assert (Hnew_cp : cp (Proc_CompAndSplit y b l2 (Proc_CompAndSplit x (dual a) l1 q p) r) senv).
+    { rewrite <- Hold_cp6, Hold_cp2; constructor; auto. }
+    pose proof (proc_comp_and_split_nested_inv x y (dual a) b l1 l2 q p r senv Hnew_cp Hy1 Hy2) as (L1 & L2 & gamma_no_L1 & delta_no_L1 & gamma_delta_no_L2 & theta_no_L2 & Hcp1 & Hcp2 & Hcp3 & Hcp4 & Hcp5 & Hcp6 & Hcp7 & Hcp8 & Hcp9 & Hcp10).
+    pose proof (proc_p_q_r_perm x y (dual a) b l1 l2 q p r senv Hnew_cp L1 L2 gamma_no_L1 delta_no_L1 gamma_delta_no_L2 theta_no_L2 Hcp3 Hcp4 Hcp5 Hcp6 Hcp7 Hcp8 Hcp9 Hcp10 Hy3) as Hcp'.
+    apply Hcp'.
   Qed.
 
   Lemma proc_assoc_3 :
-  forall x y a b p q r senv,
-  In y (proc_channels p) ->
-  ~ In x (proc_channels r) ->
-  cp (Proc_Comp y b (Proc_Comp x a p q) r) senv ->
-  cp (Proc_Comp x (dual a) q (Proc_Comp y b p r)) senv.
+  forall x y a b l1 l2 p q r senv,
+  In x (proc_channels q) ->
+  ~ In x l1 ->
+  ~ In y (proc_channels p) ->
+  cp (Proc_CompAndSplit x a l2 p (Proc_CompAndSplit y b l1 q r)) senv ->
+  let new_l1 := filter (delta_name_split_func x p) (delta_channels y x q) in
+  let new_l2 := filter (gamma_name_split_func y x q p) (gamma_channels y r) in
+  cp (Proc_CompAndSplit y b new_l2 (Proc_CompAndSplit x a new_l1 p q) r) senv.
   Proof.
-    intros x y a b p q r senv Hy1 Hy2 Hcp.
-
-    apply proc_swap in Hcp as Hcp1.
-    apply proc_assoc_2 in Hcp1 as Hcp2; auto.
-    apply proc_swap in Hcp2 as Hcp3.
-
-    destruct (cp_inv_comp _ _ _ _ _ Hcp3) as (gamma & delta & Hcp3_1 & Hcp3_2 & Hcp3_3 & Hcp3_4).
-    rewrite dual_involute in Hcp3_3.
-    apply proc_swap in Hcp3_3 as Hcp4.
-
-    eapply cp_perm.
-    2: apply Hcp3_4.
-    constructor; auto.
-    rewrite dual_involute; auto.
+    intros x y a b l1 l2 p q r senv Hy1 Hy2 Hy3 Hcp.
+    rewrite proc_swap in Hcp.
+    apply proc_assoc_2 in Hcp; auto.
+    rewrite <- proc_swap in Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (old_cp_gamma & old_cp_delta1 & old_cp_delta2 & Hold_cp1 & Hold_cp2 & Hold_cp3 & Hold_cp4 & Hold_cp5 & Hold_cp6).
+    rewrite <- proc_swap in Hold_cp4.
+    cbn.
+    rewrite <- Hold_cp6, Hold_cp2; constructor; auto.
   Qed.
 
   Lemma proc_assoc_4 :
-  forall x y a b p q r senv,
+  forall x y a b l1 l2 p q r senv,
   In x (proc_channels r) ->
+  ~ In x l1 ->
   ~ In y (proc_channels p) ->
-  cp (Proc_Comp x a p (Proc_Comp y b q r)) senv ->
-  cp (Proc_Comp y (dual b) (Proc_Comp x a p r) q) senv.
+  cp (Proc_CompAndSplit x a l2 p (Proc_CompAndSplit y b l1 q r)) senv ->
+  let new_l1 := filter (delta_name_split_func x p) (delta_channels y x r) in
+  let new_l2 := filter (gamma_name_split_func y x r p) (gamma_channels y q) in
+  cp (Proc_CompAndSplit y (dual b) new_l2 (Proc_CompAndSplit x a new_l1 p r) q) senv.
   Proof.
-    intros x y a b p q r senv Hx1 Hx2 Hcp.
-
-    apply proc_swap in Hcp as Hcp1.
-    apply proc_assoc_1 in Hcp1 as Hcp2; auto.
-    apply proc_swap in Hcp2 as Hcp3.
-
-    destruct (cp_inv_comp _ _ _ _ _ Hcp3) as (gamma & delta & Hcp3_1 & Hcp3_2 & Hcp3_3 & Hcp3_4).
-    rewrite dual_involute in Hcp3_3.
-    apply proc_swap in Hcp3_2 as Hcp4.
-
-    eapply cp_perm.
-    2: apply Hcp3_4.
+    intros x y a b l1 l2 p q r senv Hy1 Hy2 Hy3 Hcp.
+    rewrite proc_swap in Hcp.
+    apply proc_assoc_1 in Hcp; auto.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (old_cp_gamma & old_cp_delta1 & old_cp_delta2 & Hold_cp1 & Hold_cp2 & Hold_cp3 & Hold_cp4 & Hold_cp5 & Hold_cp6).
+    rewrite <- proc_swap in Hold_cp5.
+    cbn.
+    rewrite <- Hold_cp6, Hold_cp2.
+    rewrite (Permutation_app_comm old_cp_delta1).
     constructor; auto.
-    rewrite dual_involute; auto.
+    2: rewrite dual_involute; auto.
+    unfold senv_disjoint in Hold_cp3; unfold senv_disjoint.
+    intros m; specialize (Hold_cp3 m); tauto.
   Qed.
 
   Lemma proc_cut_forall_exists :
-  forall x t a v b p v' a' q senv,
-  cp (Proc_Comp x t (Proc_OutTyp x a v b p) (Proc_InTyp x v' a' q)) senv ->
+  forall x t l a v b p v' a' q senv,
+  cp (Proc_CompAndSplit x t l (Proc_OutTyp x a v b p) (Proc_InTyp x v' a' q)) senv ->
   t = STyp_Exists v b /\
   v' = v /\
   a' = dual b /\
   (Forall (fun v'' => ~ In v'' (styp_forbidden a' v')) (fvar a) ->
    Forall (fun v'' => proc_var_subst_pre q v' v'') (fvar a) ->
-   cp (Proc_Comp x (styp_subst v b a) p (proc_var_subst q v' a)) senv).
+   cp (Proc_CompAndSplit x (styp_subst v b a) l p (proc_var_subst q v' a)) senv).
   Proof.
-    intros x t a v b p v' a' q senv Hcp.
-    destruct (cp_inv_comp _ _ _ _ _ Hcp) as (gamma & delta & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
+    intros x t l a v b p v' a' q senv Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    subst l.
 
-    (* Invert Hcp'2 *)
-    destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp'2) as (gamma' & Hcp''1 & Hcp''2 & Hcp''3).
-    pose proof Hcp'2 as Hcp''4.
+    (* Invert Hcp'4 *)
+    destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp'4) as (gamma' & Hcp''1 & Hcp''2 & Hcp''3).
+    pose proof Hcp'4 as Hcp''4.
     apply cp_senv_valid in Hcp''4.
     rewrite senv_valid_cons in Hcp''4.
-    assert (Hcp''5 : In (x, STyp_Exists v b) ((x, t) :: gamma)) by (rewrite <- Hcp''3; left; auto).
+    assert (Hcp''5 : In (x, STyp_Exists v b) ((x, t) :: gamma ++ delta1)) by (rewrite <- Hcp''3; left; auto).
     cbn in Hcp''5.
     destruct Hcp''5 as [Hcp''5 | Hcp''5].
     2: apply (in_map fst) in Hcp''5; cbn in Hcp''5; tauto.
     injection Hcp''5; intros; subst t; clear Hcp''5.
     apply Permutation_cons_inv in Hcp''3.
 
-    (* Invert Hcp'3 *)
-    destruct (cp_inv_intyp _ _ _ _ _ Hcp'3) as (delta' & Hcp'''1 & Hcp'''2 & Hcp'''3).
-    pose proof Hcp'3 as Hcp'''4.
+    (* Invert Hcp'5 *)
+    destruct (cp_inv_intyp _ _ _ _ _ Hcp'5) as (delta' & Hcp'''1 & Hcp'''2 & Hcp'''3).
+    pose proof Hcp'5 as Hcp'''4.
     apply cp_senv_valid in Hcp'''4.
     rewrite senv_valid_cons in Hcp'''4.
     cbn in Hcp'''3.
-    assert (Hcp'''5 : In (x, STyp_Forall v' a') ((x, STyp_Forall v (dual b)) :: delta)) by (rewrite <- Hcp'''3; left; auto).
+    assert (Hcp'''5 : In (x, STyp_Forall v' a') ((x, STyp_Forall v (dual b)) :: gamma ++ delta2)) by (rewrite <- Hcp'''3; left; auto).
     cbn in Hcp'''5.
     destruct Hcp'''5 as [Hcp'''5 | Hcp'''5].
     2: apply (in_map fst) in Hcp'''5; cbn in Hcp'''5; tauto.
@@ -1120,13 +1028,12 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     }
     rewrite map_id in Hsubst.
 
-    rewrite <- Hcp'4.
-    rewrite <- Hcp''3, <- Hcp'''3.
+    rewrite <- Hcp'6.
+    rewrite Hcp''3 in Hcp''2.
+    rewrite Hcp'''3 in Hcp'''2.
+    rewrite Hcp'''3 in Hsubst.
     constructor; auto.
-    - unfold senv_disjoint.
-      intros m; rewrite Hcp''3, Hcp'''3; auto.
-    - rewrite styp_subst_dual; auto.
+    rewrite styp_subst_dual; auto.
   Qed.
-  *)
 
 End Wadler_Transformation.
