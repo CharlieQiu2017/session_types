@@ -229,46 +229,6 @@ Proof.
   intros z Hz.
   pose proof (NoDup_disjoint _ _ Hnodup z) as Hnodup'.
   destruct (in_dec eq_dec z l1); auto; tauto.
-Qed.  
-
-Lemma NoDup_eq_perm {T : Type} (l1 l2 : list T) : NoDup l1 -> NoDup l2 -> (forall x, In x l1 <-> In x l2) -> Permutation l1 l2.
-Proof.
-  revert l2.
-  induction l1.
-  - intros l2 _ _ Hl2.
-    destruct l2; auto.
-    specialize (Hl2 t).
-    destruct Hl2 as (_ & Hl2).
-    specialize (Hl2 ltac:(left; auto)).
-    contradiction.
-  - intros l2 Hnodup1 Hnodup2 Heq.
-    rewrite NoDup_cons_iff in Hnodup1.
-    specialize (Heq a) as Ha.
-    destruct Ha as (Ha & _).
-    specialize (Ha ltac:(left; auto)).
-    pose proof (in_split_perm _ _ Ha) as (l3 & Hl3).
-    rewrite Hl3 in Hnodup2.
-    rewrite NoDup_cons_iff in Hnodup2.
-    assert (H : forall x, In x l1 <-> In x l3).
-    { intros x; split.
-      - intros Hin.
-        specialize (Heq x).
-        destruct Heq as (Heq & _).
-        specialize (Heq ltac:(right; auto)).
-        rewrite Hl3 in Heq.
-        destruct Heq as [Heq | Heq]; auto.
-        subst x; tauto.
-      - intros Hin.
-        specialize (Heq x).
-        rewrite Hl3 in Heq.
-        destruct Heq as (_ & Heq).
-        specialize (Heq ltac:(right; auto)).
-        destruct Heq as [Heq | Heq]; auto.
-        subst x; tauto.
-    }
-    specialize (IHl1 l3 ltac:(apply Hnodup1) ltac:(apply Hnodup2) H).
-    rewrite Hl3, IHl1.
-    auto.
 Qed.
 
 Lemma filter_split {T : Type} (f : T -> bool) l : Permutation l ((filter f l) ++ (filter (fun x => negb (f x)) l)).
