@@ -1,7 +1,9 @@
 From Stdlib Require Import
   List
   Structures.Equalities
-  Sorting.Permutation.
+  Sorting.Permutation
+  Setoid
+  Morphisms.
 From Session.lib Require Import
   Lemmas.
 From Session.specs Require Import
@@ -41,44 +43,207 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
   (* An environment is a list of (channel_name, type) pairs *)
   Definition SEnv := list (chn * STyp).
 
+  Lemma senv_in_map_fst (senv : SEnv) x : In x senv -> In (fst x) (map fst senv).
+  Proof. apply in_map. Qed.
+
+  Lemma senv_in_map_fst' (senv : SEnv) x t : In (x, t) senv -> In x (map fst senv).
+  Proof. intros Hin; apply (in_map fst) in Hin; auto. Qed.
+
+  Lemma senv_in_map_snd (senv : SEnv) x : In x senv -> In (snd x) (map snd senv).
+  Proof. apply in_map. Qed.
+
+  Lemma senv_in_map_snd' (senv : SEnv) x t : In (x, t) senv -> In t (map snd senv).
+  Proof. intros Hin; apply (in_map snd) in Hin; auto. Qed.
+
+  Lemma senv_nin_map_fst (senv : SEnv) x : ~ In (fst x) (map fst senv) -> ~ In x senv.
+  Proof. apply nin_map_nin. Qed.
+
+  Lemma senv_nin_map_fst' (senv : SEnv) x t : ~ In x (map fst senv) -> ~ In (x, t) senv.
+  Proof. intros Hin1 Hin2; apply (in_map fst) in Hin2; auto. Qed.
+
+  Lemma senv_nin_map_snd (senv : SEnv) x : ~ In (snd x) (map snd senv) -> ~ In x senv.
+  Proof. apply nin_map_nin. Qed.
+
+  Lemma senv_nin_map_snd' (senv : SEnv) x t : ~ In t (map snd senv) -> ~ In (x, t) senv.
+  Proof. intros Hin1 Hin2; apply (in_map snd) in Hin2; auto. Qed.
+
+  Hint Resolve senv_in_map_fst : senv.
+  Hint Resolve senv_in_map_snd : senv.
+  Hint Resolve senv_nin_map_fst : senv.
+  Hint Resolve senv_nin_map_snd : senv.
+  Hint Resolve senv_in_map_fst' : senv.
+  Hint Resolve senv_in_map_snd' : senv.
+  Hint Resolve senv_nin_map_fst' : senv.
+  Hint Resolve senv_nin_map_snd' : senv.
+
   (* An environment is valid, if it does not type the same channel twice. *)
   Definition senv_valid (senv : SEnv) : Prop := NoDup (map fst senv).
 
-  Lemma senv_valid_cons x a senv : senv_valid ((x, a) :: senv) <-> ~ In x (map fst senv) /\ senv_valid senv.
+  Lemma senv_valid_cons x senv : senv_valid (x :: senv) <-> ~ In (fst x) (map fst senv) /\ senv_valid senv.
+  Proof. unfold senv_valid; cbn; rewrite NoDup_cons_iff; tauto. Qed.
+
+  Lemma senv_valid_tl x senv : senv_valid (x :: senv) -> senv_valid senv.
+  Proof. rewrite senv_valid_cons; tauto. Qed.
+
+  Lemma senv_valid_hd' x a senv : senv_valid ((x, a) :: senv) -> ~ In x (map fst senv).
+  Proof. rewrite senv_valid_cons; tauto. Qed.
+
+  Lemma senv_valid_hd x senv : senv_valid (x :: senv) -> ~ In (fst x) (map fst senv).
+  Proof. rewrite senv_valid_cons; tauto. Qed.
+
+  Lemma senv_valid_neq x y a b senv : senv_valid ((x, a) :: (y, b) :: senv) -> x <> y.
+  Proof. intros Hval Heq; subst y; apply senv_valid_hd' in Hval; cbn in Hval; tauto. Qed.
+
+  Hint Resolve senv_valid_tl : senv_valid.
+  Hint Resolve senv_valid_hd' : senv_valid.
+  Hint Resolve senv_valid_hd : senv_valid.
+  Hint Resolve senv_valid_neq : senv_valid.
+
+  Lemma senv_app_l : forall senv1 senv2,
+  senv_valid (senv1 ++ senv2) ->
+  senv_valid senv1.
   Proof.
-    unfold senv_valid; cbn; rewrite NoDup_cons_iff.
-    split; auto.
+    intros senv1 senv2 Hval.
+    unfold senv_valid in Hval.
+    rewrite map_app in Hval.
+    apply NoDup_app_remove_r in Hval.
+    auto.
   Qed.
 
-  Lemma senv_tail_valid x (senv : SEnv) : senv_valid (x :: senv) -> senv_valid senv.
+  Lemma senv_app_r : forall senv1 senv2,
+  senv_valid (senv1 ++ senv2) ->
+  senv_valid senv2.
   Proof.
-    destruct x; rewrite senv_valid_cons; tauto.
+    intros senv1 senv2 Hval.
+    unfold senv_valid in Hval.
+    rewrite map_app in Hval.
+    apply NoDup_app_remove_l in Hval.
+    auto.
   Qed.
+
+  Hint Resolve senv_app_l : senv_valid.
+  Hint Resolve senv_app_r : senv_valid.
+
+  Lemma senv_valid_builder x senv : senv_valid senv -> ~ In (fst x) (map fst senv) -> senv_valid (x :: senv).
+  Proof. intros Hval Hnin; rewrite senv_valid_cons; tauto. Qed.
+
+  Hint Resolve senv_valid_builder : senv_valid.
+
+  #[export] Instance senv_valid_proper : Proper (@Permutation (chn * STyp) ==> iff) (fun senv => senv_valid senv).
+  Proof.
+    unfold Proper.
+    intros senv senv'.
+    intros Hperm.
+    unfold senv_valid.
+    rewrite Hperm; tauto.
+  Qed.
+
+  Lemma senv_valid_app_nodup senv1 senv2 : senv_valid (senv1 ++ senv2) -> NoDup (map fst senv1 ++ map fst senv2).
+  Proof. unfold senv_valid; rewrite map_app; auto. Qed.
+
+  Lemma senv_valid_cons_nodup x a senv : senv_valid ((x, a) :: senv) -> NoDup (x :: map fst senv).
+  Proof. unfold senv_valid; cbn; auto. Qed.
+
+  Lemma senv_valid_cons_nodup_2 x y a b senv : senv_valid ((x, a) :: (y, b) :: senv) -> NoDup (x :: y :: map fst senv).
+  Proof. unfold senv_valid; cbn; auto. Qed.
+
+  Hint Resolve senv_valid_cons_nodup : senv_nodup.
+  Hint Resolve senv_valid_cons_nodup_2 : senv_nodup.
+  Hint Resolve senv_valid_app_nodup : senv_nodup.
 
   (* Two environments are disjoint if their channel names are disjoint *)
-  Definition senv_disjoint (senv1 senv2: SEnv) : Prop := forall m, In m (map fst senv1) -> ~ In m (map fst senv2).
+  Definition senv_disjoint (senv1 senv2 : SEnv) : Prop := forall m, In m (map fst senv1) -> ~ In m (map fst senv2).
 
-  Lemma senv_disjoint_disjoint (senv1 senv2: SEnv) : senv_disjoint senv1 senv2 -> forall m, In m senv1 -> ~ In m senv2.
+  Lemma senv_app_disjoint (senv1 senv2 : SEnv) : senv_valid (senv1 ++ senv2) -> senv_disjoint senv1 senv2.
   Proof.
-    intros Hdisjoint m Hm.
-    specialize (Hdisjoint (fst m) ltac:(rewrite in_map_iff; eexists; split; auto)).
-    intros Hin; apply Hdisjoint; rewrite in_map_iff; eexists; split; auto.
+    unfold senv_valid, senv_disjoint.
+    intros Hnodup.
+    rewrite map_app in Hnodup.
+    intros m.
+    apply (NoDup_disjoint _ _ m Hnodup).
   Qed.
 
-  Lemma senv_disjoint_in_app (senv2 senv3 : SEnv) : senv_disjoint senv2 senv3 -> forall senv1 x, In x senv1 <-> In x (senv1 ++ senv2) /\ In x (senv1 ++ senv3).
+  Lemma senv_disjoint_sym senv1 senv2 : senv_disjoint senv1 senv2 -> senv_disjoint senv2 senv1.
+  Proof. unfold senv_disjoint; firstorder. Qed.
+
+  Hint Resolve senv_app_disjoint : senv_disjoint.
+  Hint Resolve senv_disjoint_sym : senv_disjoint.
+
+  Lemma senv_disjoint_prop_1 senv1 senv2 m : senv_disjoint senv1 senv2 -> In m (map fst senv1) -> ~ In m (map fst senv2).
+  Proof. unfold senv_disjoint; firstorder. Qed.
+
+  Lemma senv_disjoint_prop_2 senv1 senv2 m : senv_disjoint senv1 senv2 -> In m (map fst senv2) -> ~ In m (map fst senv1).
+  Proof. unfold senv_disjoint; firstorder. Qed.
+
+  Lemma senv_disjoint_prop_3 senv1 senv2 m : senv_disjoint senv1 senv2 -> In m senv1 -> ~ In m senv2.
+  Proof. intros H1 H2; pose proof (senv_disjoint_prop_1 _ _ (fst m) H1); eauto with senv. Qed.
+
+  Lemma senv_disjoint_prop_4 senv1 senv2 m : senv_disjoint senv1 senv2 -> In m senv2 -> ~ In m senv1.
+  Proof. intros H1 H2 H3; apply (senv_disjoint_prop_3 _ _ _ H1 H3 H2). Qed.
+
+  Lemma senv_disjoint_prop_5 senv1 senv2 m : senv_disjoint senv1 senv2 -> In m senv1 -> ~ In (fst m) (map fst senv2).
+  Proof. intros H1 H2; pose proof (senv_disjoint_prop_3 _ _ _ H1 H2); eauto with senv. Qed.
+
+  Lemma senv_disjoint_prop_6 senv1 senv2 m : senv_disjoint senv1 senv2 -> In m senv2 -> ~ In (fst m) (map fst senv1).
+  Proof. intros H1 H2; pose proof (senv_disjoint_prop_2 _ _ (fst m) H1); eauto with senv. Qed.
+
+  Lemma senv_disjoint_prop_7 senv1 senv2 m : senv_disjoint senv1 senv2 -> In (fst m) (map fst senv1) -> ~ In m senv2.
+  Proof. intros H1 H2 H3; apply (senv_disjoint_prop_6 _ _ _ H1 H3 H2). Qed.
+
+  Lemma senv_disjoint_prop_8 senv1 senv2 m : senv_disjoint senv1 senv2 -> In (fst m) (map fst senv2) -> ~ In m senv1.
+  Proof. intros H1 H2 H3; apply (senv_disjoint_prop_5 _ _ _ H1 H3 H2). Qed.
+
+  Hint Resolve senv_disjoint_prop_1 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_2 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_3 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_4 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_5 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_6 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_7 : senv_disjoint.
+  Hint Resolve senv_disjoint_prop_8 : senv_disjoint.
+
+  Lemma senv_disjoint_in_app_1 senv1 senv2 senv3 x : senv_disjoint senv1 senv2 -> senv_disjoint senv2 senv3 -> In x (senv1 ++ senv2) -> In (fst x) (map fst (senv1 ++ senv3)) -> In x senv1.
   Proof.
-    intros Hdisjoint senv1 x.
-    pose proof (senv_disjoint_disjoint _ _ Hdisjoint x).
+    intros Hdisjoint1 Hdisjoint2.
+    pose proof (senv_disjoint_prop_6 _ _ x Hdisjoint1).
+    pose proof (senv_disjoint_prop_5 _ _ x Hdisjoint2).
+    rewrite map_app.
     do 2 rewrite in_app_iff.
     tauto.
   Qed.
 
-  Lemma senv_disjoint_in_cons (senv2 senv3 : SEnv) : senv_disjoint senv2 senv3 -> forall y x, y = x <-> In x (y :: senv2) /\ In x (y :: senv3).
+  Lemma senv_disjoint_in_app_2 senv1 senv2 senv3 x : senv_disjoint senv1 senv3 -> senv_disjoint senv2 senv3 -> In x (senv1 ++ senv3) -> In (fst x) (map fst (senv1 ++ senv2)) -> In x senv1.
   Proof.
-    intros Hdisjoint y x.
-    pose proof (senv_disjoint_disjoint _ _ Hdisjoint x).
-    cbn; tauto.
+    intros Hdisjoint1 Hdisjoint2.
+    pose proof (senv_disjoint_prop_6 _ _ x Hdisjoint1).
+    pose proof (senv_disjoint_prop_6 _ _ x Hdisjoint2).
+    rewrite map_app.
+    do 2 rewrite in_app_iff.
+    tauto.
   Qed.
+
+  Lemma senv_disjoint_in_app_3 senv1 senv2 senv3 x : senv_disjoint senv1 senv2 -> senv_disjoint senv2 senv3 -> In x (map fst (senv1 ++ senv2)) -> In x (map fst (senv1 ++ senv3)) -> In x (map fst senv1).
+  Proof.
+    intros Hdisjoint1 Hdisjoint2.
+    pose proof (senv_disjoint_prop_1 _ _ x Hdisjoint1).
+    pose proof (senv_disjoint_prop_1 _ _ x Hdisjoint2).
+    do 2 rewrite map_app, in_app_iff.
+    tauto.
+  Qed.
+
+  Lemma senv_disjoint_in_app_4 senv1 senv2 senv3 x : senv_disjoint senv1 senv3 -> senv_disjoint senv2 senv3 -> In x (map fst (senv1 ++ senv2)) -> In x (map fst (senv1 ++ senv3)) -> In x (map fst senv1).
+  Proof.
+    intros Hdisjoint1 Hdisjoint2.
+    pose proof (senv_disjoint_prop_1 _ _ x Hdisjoint1).
+    pose proof (senv_disjoint_prop_1 _ _ x Hdisjoint2).
+    do 2 rewrite map_app, in_app_iff.
+    tauto.
+  Qed.
+
+  Hint Resolve senv_disjoint_in_app_1 : senv_disjoint_app.
+  Hint Resolve senv_disjoint_in_app_2 : senv_disjoint_app.
+  Hint Resolve senv_disjoint_in_app_3 : senv_disjoint_app.
+  Hint Resolve senv_disjoint_in_app_4 : senv_disjoint_app.
 
   Lemma senv_disjoint_app_valid : forall senv1 senv2,
   senv_valid senv1 ->
@@ -93,18 +258,50 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
     apply NoDup_app; auto.
   Qed.
 
-  Lemma senv_app : forall senv1 senv2,
-  senv_valid (senv1 ++ senv2) ->
-  senv_valid senv1 /\ senv_valid senv2 /\ senv_disjoint senv1 senv2.
+  Hint Resolve senv_disjoint_app_valid : senv_valid.
+
+  Lemma senv_disjoint_app : forall senv1 senv2 senv3,
+  senv_disjoint senv1 senv2 ->
+  senv_disjoint senv1 senv3 ->
+  senv_disjoint senv1 (senv2 ++ senv3).
   Proof.
-    intros senv1 senv2 Hval.
-    unfold senv_valid in Hval.
-    rewrite map_app in Hval.
-    repeat split.
-    - eapply NoDup_app_remove_r; apply Hval.
-    - eapply NoDup_app_remove_l; apply Hval.
-    - unfold senv_disjoint; apply NoDup_disjoint; auto.
+    intros senv1 senv2 senv3.
+    intros Hdisjoint1 Hdisjoint2.
+    unfold senv_disjoint; intros m.
+    specialize (Hdisjoint1 m).
+    specialize (Hdisjoint2 m).
+    rewrite map_app, in_app_iff; tauto.
   Qed.
+
+  Lemma senv_disjoint_cons : forall senv1 senv2 x,
+  senv_disjoint senv1 senv2 ->
+  ~ In (fst x) (map fst senv1) ->
+  senv_disjoint senv1 (x :: senv2).
+  Proof.
+    intros senv1 senv2 x.
+    intros Hdisjoint Hnin.
+    unfold senv_disjoint in *.
+    intros m Hin.
+    specialize (Hdisjoint _ Hin).
+    cbn; intros Hin'.
+    destruct Hin' as [Hin' | Hin']; [subst; tauto | tauto].
+  Qed.
+
+  Hint Resolve senv_disjoint_app : senv_disjoint.
+  Hint Resolve senv_disjoint_cons : senv_disjoint.
+
+  Lemma senv_disjoint_app_3 : forall senv1 senv2 senv3,
+  senv_valid (senv1 ++ senv2) ->
+  senv_valid senv3 ->
+  senv_disjoint senv1 senv3 ->
+  senv_disjoint senv2 senv3 ->
+  senv_valid (senv1 ++ senv2 ++ senv3).
+  Proof.
+    intros senv1 senv2 senv3 Hval1 Hval2 Hdisjoint1 Hdisjoint2.
+    apply senv_disjoint_app_valid; eauto with senv_disjoint senv_valid.
+  Qed.
+
+  Hint Resolve senv_disjoint_app_3 : senv_disjoint.
 
   Definition str_list_repl (l : list chn) (s : chn) (t : chn) :=
   map (fun x => if eqb x s then t else x) l.
@@ -131,6 +328,20 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
     destruct (eqb_spec t s); try subst; auto.
   Qed.
 
+  Hint Rewrite str_list_repl_ident : senv_rename.
+  Hint Rewrite senv_rename_ident : senv_rename.
+
+  Lemma senv_rename_snd : forall (senv : SEnv) (s s' : chn), map snd (senv_rename senv s s') = map snd senv.
+  Proof.
+    intros senv s s'.
+    unfold senv_rename.
+    rewrite map_map.
+    apply map_ext.
+    intros t; destruct t; destruct (eqb t s); auto.
+  Qed.
+
+  Hint Rewrite senv_rename_snd : senv_rename.
+
   Lemma senv_rename_repl : forall senv s t, map fst (senv_rename senv s t) = str_list_repl (map fst senv) s t.
   Proof.
     intros senv.
@@ -141,6 +352,12 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
     intros z; destruct z; cbn.
     destruct (eqb_spec t0 s); cbn; auto.
   Qed.
+
+  Lemma senv_rename_length : forall l s t, length (senv_rename l s t) = length l.
+  Proof. intros l s t; unfold senv_rename; apply length_map. Qed.
+
+  Lemma str_list_repl_length : forall l s t, length (str_list_repl l s t) = length l.
+  Proof. intros l s t; unfold str_list_repl; apply length_map. Qed.
 
   Lemma str_list_repl_nin : forall l s t,
   ~ In s l ->
@@ -188,24 +405,21 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
     induction l.
     - cbn; constructor.
     - cbn; intros Hnodup.
-      inversion Hnodup as [| ? ? Ha Hl]; subst.
-      fold (str_list_repl l s t); destruct (eqb_spec a s).
-      + subst s; constructor.
-        2: cbn in Hnin; apply IHl; tauto.
+      inversion Hnodup as [| ? ? Ha Hl]; subst; clear Hnodup.
+      cbn in Hnin.
+      specialize (IHl ltac:(cbn in Hnin; tauto) ltac:(auto)).
+      fold (str_list_repl l s t).
+      destruct (eqb_spec a s).
+      + subst s; constructor; auto.
         intros Hin; unfold str_list_repl in Hin.
         rewrite in_map_iff in Hin.
         destruct Hin as (x & Hx1 & Hx2).
-        destruct (eqb_spec x a).
-        * subst; contradiction.
-        * subst; cbn in Hnin; tauto.
-      + constructor.
-        2: cbn in Hnin; apply IHl; tauto.
+        destruct (eqb_spec x a); subst; tauto.
+      + constructor; auto.
         intros Hin; unfold str_list_repl in Hin.
         rewrite in_map_iff in Hin.
         destruct Hin as (x & Hx1 & Hx2).
-        destruct (eqb_spec x s).
-        * subst; cbn in Hnin; tauto.
-        * subst; contradiction.
+        destruct (eqb_spec x s); subst; tauto.
   Qed.
 
   Lemma senv_rename_nin_valid : forall senv s t,
@@ -216,54 +430,73 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
     intros senv s t Hval Hnin.
     unfold senv_valid.
     unfold senv_valid in Hval.
-    revert Hval Hnin.
-    induction senv.
-    - cbn; constructor.
-    - intros Hval Hin.
-      cbn in Hin.
-      cbn in Hval.
-      rewrite NoDup_cons_iff in Hval.
-      specialize (IHsenv ltac:(tauto) ltac:(tauto)).
-
-      unfold senv_rename.
-      cbn [map fst].
-      fold (senv_rename senv s t).
-
-      constructor; auto.
-      unfold senv_rename.
-      rewrite map_map.
-      destruct a; cbn in Hval, Hin.
-      destruct (eqb_spec t0 s).
-      + subst t0.
-        cbn.
-        intros Hin'.
-        rewrite in_map_iff in Hin'.
-        destruct Hin' as (z & Hz1 & Hz2).
-        destruct z.
-        destruct (eqb_spec t0 s); cbn in Hz1; try subst t.
-        * subst t0.
-          apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-        * apply Hin; right; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-      + cbn.
-        intros Hin'.
-        rewrite in_map_iff in Hin'.
-        destruct Hin' as (z & Hz1 & Hz2).
-        destruct z.
-        destruct (eqb_spec t1 s); cbn in Hz1; subst t0; try subst t1.
-        * tauto.
-        * apply Hval; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+    rewrite senv_rename_repl.
+    apply str_list_repl_nodup; auto.
   Qed.
 
-  Lemma senv_rename_snd :
-  forall senv s t, map snd (senv_rename senv s t) = map snd senv.
+  Hint Resolve str_list_repl_nodup : senv_rename.
+  Hint Resolve senv_rename_nin_valid : senv_rename.
+
+  Lemma senv_rename_nin_disjoint : forall senv1 senv2 s t,
+  senv_disjoint senv1 senv2 ->
+  ~ In t (map fst senv2) ->
+  senv_disjoint (senv_rename senv1 s t) senv2.
   Proof.
-    intros senv s t.
+    intros senv1 senv2 s t Hdisjoint Hnin.
+    unfold senv_disjoint.
+    intros z Hz.
+    unfold senv_rename in Hz.
+    rewrite map_map, in_map_iff in Hz.
+    destruct Hz as (w & Hw1 & Hw2); subst z.
+    destruct w; destruct (eqb_spec t0 s).
+    - subst t0; cbn; auto.
+    - cbn; eauto with senv senv_disjoint.
+  Qed.
+
+  Lemma senv_rename_nin_nin : forall senv s t x,
+  ~ In x (map fst senv) ->
+  x <> t ->
+  ~ In x (map fst (senv_rename senv s t)).
+  Proof.
+    intros senv s t x Hnin1 Hnin2.
     unfold senv_rename.
     rewrite map_map.
-    apply map_ext.
-    intros z.
+    intros Hin.
+    rewrite in_map_iff in Hin.
+    destruct Hin as (z & Hz1 & Hz2); subst x.
     destruct z.
-    destruct (eqb t0 s); cbn; auto.
+    destruct (eqb_spec t0 s).
+    - subst t0; cbn in Hnin2; tauto.
+    - cbn in Hnin1.
+      apply (in_map fst) in Hz2; cbn in Hz2; tauto.
+  Qed.
+
+  Lemma senv_rename_combine :
+  forall l l' s t,
+  length l = length l' ->
+  senv_rename (combine l l') s t = combine (str_list_repl l s t) l'.
+  Proof.
+    intros l l' s t.
+    remember (length l) as n.
+    revert l l' Heqn.
+    induction n.
+    - intros l l' Hl1 Hl2.
+      symmetry in Hl1, Hl2.
+      rewrite length_zero_iff_nil in Hl1, Hl2.
+      subst l l'.
+      cbn; auto.
+    - intros l l' Hl1 Hl2.
+      destruct l; [discriminate|].
+      destruct l'; [discriminate|].
+      cbn in Hl1, Hl2.
+      injection Hl1; intros; subst n; clear Hl1.
+      injection Hl2; intros Hl; clear Hl2.
+      specialize (IHn l l' ltac:(auto) Hl).
+      cbn.
+      destruct (eqb t0 s).
+      all: fold (senv_rename (combine l l') s t);
+           fold (str_list_repl l s t);
+           rewrite IHn; auto.
   Qed.
 
 End Wadler_SEnv.
@@ -340,7 +573,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_Link x y => [x; y]
   | Proc_Comp x a p q => filter (fun s => negb (eqb x s)) ((proc_channels p) ++ (proc_channels q))
   | Proc_OutCh x y p q => filter (fun s => negb (eqb y s)) (proc_channels p) ++ (proc_channels q)
-  | Proc_OutChAndSplit x y l p q => l ++ filter (fun s => if in_dec eq_dec s l then false else negb (eqb y s)) (proc_channels p) ++ filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels q)
+  | Proc_OutChAndSplit x y l p q => l ++ filter (fun s => negb (eqb y s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p)) ++ filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels q)
   | Proc_InCh x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
   | Proc_OutLeft x p => proc_channels p
   | Proc_OutRight x p => proc_channels p
@@ -349,7 +582,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_Client x y p => x :: filter (fun s => negb (eqb y s)) (proc_channels p)
   | Proc_ClientNull x p => x :: (proc_channels p)
   | Proc_ClientSplit x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
-  | Proc_CompAndSplit x a l p q => l ++ filter (fun s => if in_dec eq_dec s l then false else negb (eqb x s)) (proc_channels p ++ proc_channels q)
+  | Proc_CompAndSplit x a l p q => l ++ filter (fun s => negb (eqb x s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p ++ proc_channels q))
   | Proc_OutTyp x a _ _ p => proc_channels p
   | Proc_InTyp x v t p => proc_channels p
   | Proc_OutUnit x => [x]
@@ -372,8 +605,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       let delta := filter (fun s => negb (eqb x s)) (proc_channels q) in
       if eqb x s then gamma ++ (proc_forbidden q s) else if in_dec eq_dec s gamma then x :: (proc_forbidden p s) ++ delta else if in_dec eq_dec s delta then (proc_forbidden q s) ++ gamma else []
   | Proc_OutChAndSplit x y l p q =>
-      let delta1 := filter (fun s => if in_dec eq_dec s l then false else negb (eqb y s)) (proc_channels p) in
-      let delta2 := filter (fun s => if in_dec eq_dec s l then false else negb (eqb x s)) (proc_channels q) in
+      let delta1 := filter (fun s => if in_dec eq_dec s l then false else true) (filter (fun s => negb (eqb y s)) (proc_channels p)) in
+      let delta2 := filter (fun s => if in_dec eq_dec s l then false else true) (filter (fun s => negb (eqb x s)) (proc_channels q)) in
       if eqb x s then l ++ delta1 ++ (proc_forbidden q s) else if in_dec eq_dec s l then (proc_forbidden p s) ++ (proc_forbidden q s) else if in_dec eq_dec s delta1 then x :: l ++ delta2 ++ (proc_forbidden p s) else if in_dec eq_dec s delta2 then l ++ delta1 ++ (proc_forbidden q s) else []
   | Proc_InCh x y p => if eqb y s then [] else proc_forbidden p s
   | Proc_OutLeft x p => proc_forbidden p s
@@ -408,7 +641,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     forall c l l',
       NoDup l -> pcn_sig c l' -> length l = length l' -> cp (Proc_Const c l) (combine l l')
   | cp_ax :
-    forall w x a, ~ w = x -> cp (Proc_Link w x) [(w, dual a); (x, a)]
+    forall w x a, ~ x = w -> cp (Proc_Link w x) [(w, dual a); (x, a)]
   | cp_cut :
     forall x a p q gamma delta,
       senv_disjoint gamma delta ->
@@ -501,6 +734,14 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       Permutation gamma gamma' ->
       cp p gamma'.
 
+  #[export] Instance cp_proper : Proper (Logic.eq ==> @Permutation (chn * STyp) ==> iff) (fun p senv => cp p senv).
+  Proof.
+    unfold Proper.
+    intros p p' Heq; subst p'.
+    intros senv1 senv2 Hperm.
+    split; intros Hcp; eapply cp_perm; try apply Hcp; auto; symmetry; auto.
+  Qed.
+
   (* If cp p gamma holds, then gamma is a valid environment *)
   Lemma cp_senv_valid :
   forall p senv,
@@ -508,62 +749,31 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   senv_valid senv.
   Proof.
     intros p senv Hcp.
-    induction Hcp.
+    induction Hcp; try (apply IHHcp); try (apply IHHcp1).
+    all: eauto with senv_valid.
+    5,6: rewrite perm_swap in IHHcp; apply senv_valid_tl in IHHcp; apply IHHcp.
+
     - unfold senv_valid; rewrite combine_map_fst; auto.
-    - unfold senv_valid; cbn; constructor; [firstorder | constructor; auto; constructor].
-    - apply senv_disjoint_app_valid; auto; eapply NoDup_cons_inv; eauto.
-    - rewrite senv_valid_cons.
-      rewrite senv_valid_cons in IHHcp1, IHHcp2.
-      split.
-      2: apply senv_disjoint_app_valid; tauto.
-      rewrite map_app; rewrite in_app_iff; tauto.
-    - rewrite senv_valid_cons.
-      rewrite senv_valid_cons in IHHcp1, IHHcp2.
-      rewrite map_app, in_app_iff in IHHcp1, IHHcp2.
-      do 2 rewrite map_app, in_app_iff.
-      split; [tauto|].
-      rewrite app_assoc.
-      apply senv_disjoint_app_valid.
-      + tauto.
-      + destruct IHHcp2 as (_ & H2); apply senv_app in H2; tauto.
-      + unfold senv_disjoint.
-        intros z Hz.
-        rewrite map_app, in_app_iff in Hz.
-        destruct Hz as [Hz | Hz].
-        * destruct IHHcp2 as (_ & H2); apply senv_app in H2; destruct H2 as (_ & _ & H2); specialize (H2 z); auto.
-        * specialize (H1 z); auto.
-    - rewrite senv_valid_cons in IHHcp; cbn in IHHcp.
-      rewrite senv_valid_cons in IHHcp.
-      rewrite senv_valid_cons; tauto.
-    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
-    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
-    - rewrite senv_valid_cons in IHHcp1; rewrite senv_valid_cons; auto.
-    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; tauto.
-    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; tauto.
-    - rewrite senv_valid_cons; tauto.
-    - rewrite senv_valid_cons in IHHcp; cbn in IHHcp.
-      rewrite senv_valid_cons in IHHcp.
-      rewrite senv_valid_cons; tauto.
-    - rewrite senv_valid_cons in IHHcp1, IHHcp2.
-      destruct IHHcp1 as (_ & IHHcp1); destruct IHHcp2 as (_ & IHHcp2).
-      apply senv_app in IHHcp1, IHHcp2.
-      apply senv_disjoint_app_valid.
-      2: apply senv_disjoint_app_valid.
-      1,2,3,4: tauto.
-      destruct IHHcp1 as (_ & _ & IHHcp1).
-      destruct IHHcp2 as (_ & _ & IHHcp2).
-      unfold senv_disjoint; unfold senv_disjoint in IHHcp1, IHHcp2.
-      intros m Hm; specialize (IHHcp1 _ Hm); specialize (IHHcp2 _ Hm).
-      rewrite map_app; rewrite in_app_iff; tauto.
-    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
-    - rewrite senv_valid_cons in IHHcp; rewrite senv_valid_cons; auto.
-    - cbn; constructor; auto; constructor.
-    - rewrite senv_valid_cons; tauto.
-    - rewrite senv_valid_cons; tauto.
-    - unfold senv_valid; eapply Permutation_NoDup.
-      1: eapply Permutation_map; apply H.
-      apply IHHcp.
+    - unfold senv_valid; cbn; constructor; [cbn; tauto | constructor; auto; constructor].
+    - assert (~ In x (map fst delta)) by eauto with senv_valid;
+      assert (~ In x (map fst (gamma ++ delta))) by (rewrite map_app, in_app_iff; tauto);
+      eauto with senv_valid.
+    - assert (senv_valid (gamma ++ delta1)) by eauto with senv_valid;
+      assert (senv_valid delta2) by eauto with senv_valid;
+      assert (senv_disjoint gamma delta2) by eauto with senv_disjoint senv_valid;
+      assert (senv_valid (gamma ++ delta1 ++ delta2)) by eauto with senv_disjoint senv_valid;
+      assert (~ In x (map fst (gamma ++ delta2))) by eauto with senv_valid;
+      assert (~ In x (map fst (gamma ++ delta1 ++ delta2))) by (rewrite (Permutation_app_comm delta1); rewrite app_assoc; rewrite map_app, in_app_iff; tauto);
+      eauto with senv_valid.
+    - assert (senv_valid (gamma ++ delta1)) by eauto with senv_valid;
+      assert (senv_valid delta2) by eauto with senv_valid;
+      assert (senv_disjoint gamma delta2) by eauto with senv_valid senv_disjoint;
+      eauto with senv_valid senv_disjoint.
+    - constructor; auto; constructor.
+    - rewrite <- H; auto.
   Qed.
+
+  Hint Resolve cp_senv_valid : senv_valid.
 
   Lemma proc_channels_perm :
   forall p senv, cp p senv -> Permutation (map fst senv) (proc_channels p).
@@ -576,49 +786,72 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     all: try rewrite <- IHHcp1, <- IHHcp2; try rewrite <- IHHcp; cbn.
     all: try rewrite eqb_refl; cbn.
     9: rewrite H; auto.
-    all: try apply cp_senv_valid in Hcp1, Hcp2; try apply cp_senv_valid in Hcp.
-    all: try repeat rewrite senv_valid_cons in Hcp1, Hcp2; try repeat rewrite senv_valid_cons in Hcp.
-    1,2,4,5,6,7: try (repeat rewrite forallb_filter_id; auto; try (rewrite forallb_forall; intros z Hz; rewrite negb_eqb_true_iff; intros Heq; subst; tauto)).
+    1,2,4,5,6,7:
+      repeat rewrite forallb_filter_id; auto;
+      try (rewrite forallb_forall;
+           intros z Hz;
+           rewrite negb_eqb_true_iff;
+           intros Heq; subst z;
+           match type of Hz with ?P => assert (~ P) by eauto with senv_valid end;
+           auto).
     1: rewrite Permutation_middle; auto.
-    1,2: cbn in Hcp; destruct (eqb_spec y x); try tauto; cbn; auto.
+    1,2: assert (Hx : x <> y) by eauto with senv_valid; destruct (eqb_spec y x); [symmetry in e; tauto | eauto with senv_valid].
 
-    1: rewrite map_app in Hcp1, Hcp2;
-       rewrite in_app_iff in Hcp1, Hcp2;
+    1: assert (~ In y (map fst gamma)) by (eauto with senv_valid);
+       assert (~ In x (map fst gamma)) by (eauto with senv_valid);
        destruct (in_dec eq_dec y (map fst gamma)); [tauto|];
        destruct (in_dec eq_dec x (map fst gamma)); [tauto|];
-       destruct Hcp1 as (? & Hcp1); destruct Hcp2 as (? & Hcp2);
-       unfold senv_valid in Hcp1, Hcp2;
-       rewrite map_app in Hcp1, Hcp2;
-       pose proof (NoDup_disjoint _ _ Hcp1) as Hcp3;
-       pose proof (NoDup_disjoint _ _ Hcp2) as Hcp4.
-
-    2: rewrite map_app in Hcp1, Hcp2;
-       rewrite in_app_iff in Hcp1, Hcp2;
-       destruct (in_dec eq_dec x (map fst gamma)); [tauto|];
-       destruct Hcp1 as (? & Hcp1); destruct Hcp2 as (? & Hcp2);
-       unfold senv_valid in Hcp1, Hcp2;
-       rewrite map_app in Hcp1, Hcp2;
-       pose proof (NoDup_disjoint _ _ Hcp1) as Hcp3;
-       pose proof (NoDup_disjoint _ _ Hcp2) as Hcp4.
-
-    all: do 3 rewrite map_app.
-    all: do 2 try match goal with |- context[filter ?f (?l1 ++ ?l2)] => replace (filter f (l1 ++ l2)) with l2 end; auto.
+       do 3 rewrite map_app;
+       rewrite NoDup_filter_app; [|eauto with senv_valid senv_nodup];
+       rewrite NoDup_filter_app; [|eauto with senv_valid senv_nodup];
+       rewrite NoDup_filter_one; [|apply eqb_spec|].
     1: do 2 rewrite <- Permutation_middle; auto.
-    all: rewrite filter_app.
-    1,3: rewrite (forallb_filter_id _ (map fst delta2)).
-    1,3: rewrite forallb_filter_nil; auto.
-    5,6: rewrite (forallb_filter_id _ (map fst delta1)).
-    5,7: rewrite forallb_filter_nil; auto.
-    all: rewrite forallb_forall; intros z Hz; specialize (Hcp3 z); specialize (Hcp4 z).
-    all: destruct (in_dec eq_dec z (map fst gamma)); try tauto; auto.
-    all: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
+
+    2: assert (~ In x (map fst gamma)) by eauto with senv_valid;
+       destruct (in_dec eq_dec x (map fst gamma)); [tauto|];
+       do 3 rewrite map_app; rewrite filter_app;
+       rewrite NoDup_filter_app; [|eauto with senv_valid senv_nodup];
+       rewrite NoDup_filter_app; [|eauto with senv_valid senv_nodup];
+       rewrite NoDup_filter_one; [|apply eqb_spec|].
+    2: rewrite NoDup_filter_one; [|apply eqb_spec|]; auto.
+
+    all: rewrite Permutation_middle in Hcp1, Hcp2; eauto with senv_valid senv_nodup.
   Qed.
 
-  Lemma cp_channels :
-  forall p senv x',
-  cp p senv ->
-  In x' (map fst senv) <-> In x' (proc_channels p).
-  Proof. intros p senv x' Hcp; rewrite (proc_channels_perm _ _ Hcp); tauto. Qed.
+  Lemma proc_channels_filter_one :
+  forall p x t senv, cp p ((x, t) :: senv) -> Permutation (filter (fun s => negb (eqb x s)) (proc_channels p)) (map fst senv).
+  Proof.
+    intros p x t senv Hcp.
+    rewrite <- (proc_channels_perm _ _ Hcp); cbn [map fst].
+    rewrite NoDup_filter_one; [auto | apply eqb_spec | eauto with senv_valid senv_nodup].
+  Qed.
+
+  Lemma proc_channels_filter_two :
+  forall p x y t t' senv, cp p ((x, t) :: (y, t') :: senv) -> Permutation (filter (fun s => negb (eqb x s) && negb (eqb y s)) (proc_channels p)) (map fst senv).
+  Proof.
+    intros p x y t t' senv Hcp.
+    rewrite <- (proc_channels_perm _ _ Hcp); cbn [map fst].
+    rewrite NoDup_filter_two; [auto | apply eqb_spec | eauto with senv_valid senv_nodup].
+  Qed.
+
+  Lemma proc_channels_filter_app :
+  forall p senv1 senv2, cp p (senv1 ++ senv2) -> Permutation (filter (fun s => if in_dec eq_dec s (map fst senv1) then false else true) (proc_channels p)) (map fst senv2).
+  Proof.
+    intros p senv1 senv2 Hcp.
+    rewrite <- (proc_channels_perm _ _ Hcp).
+    rewrite map_app.
+    rewrite NoDup_filter_app; auto.
+    eauto with senv_valid senv_nodup.
+  Qed.
+
+  Lemma proc_channels_filter_one_and_app :
+  forall p x t senv1 senv2, cp p ((x, t) :: senv1 ++ senv2) -> Permutation (filter (fun s => if in_dec eq_dec s (map fst senv1) then false else true) (filter (fun s => negb (eqb x s)) (proc_channels p))) (map fst senv2).
+  Proof.
+    intros p x t senv1 senv2 Hcp.
+    rewrite <- (proc_channels_perm _ _ Hcp); cbn [map fst].
+    rewrite NoDup_filter_one; [| apply eqb_spec | eauto with senv_valid senv_nodup].
+    rewrite map_app, NoDup_filter_app; [auto | eauto with senv_valid senv_nodup].
+  Qed.
 
   (* If s is not a channel of p, then proc_forbidden returns [].
      This lemma is used to reason about the correctness of proc_rename.
@@ -639,15 +872,12 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     - (* Proc_Const *)
       cbn; intros s Hin.
       rewrite combine_map_fst in Hin; auto.
-      destruct (in_dec eq_dec s l); auto; contradiction.
+      destruct (in_dec eq_dec s l); tauto.
 
     - (* Proc_Link w x *)
       cbn; intros s Hin.
-      destruct (eqb_spec w s).
-      1: tauto.
-      destruct (eqb_spec x s).
-      1: tauto.
-      auto.
+      destruct (eqb_spec w s); [tauto|].
+      destruct (eqb_spec x s); tauto.
 
     - (* Proc_Comp x a p q *)
       cbn; intros s Hin.
@@ -656,25 +886,19 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       (* Case 1: s = x *)
       destruct (eqb_spec x s); auto.
 
+      (* The complex conditions *)
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp2) as Hcond2.
+
       (* Case 2: s in gamma *)
       match goal with |- context[if ?p then _ else _] => destruct p end.
       + (* s in gamma *)
-        rewrite filter_In in i; destruct i as (i & _).
-        rewrite <- (cp_channels _ _ _ Hcp1) in i.
-        cbn in i.
-        destruct i as [? | i]; [contradiction|].
-
-        tauto.
+        rewrite Hcond1 in i; tauto.
 
       + (* Case 3: s in delta *)
+        rewrite Hcond1 in n0.
         match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-        (* s in delta *)
-        rewrite filter_In in i; destruct i as (i & _).
-        rewrite <- (cp_channels _ _ _ Hcp2) in i.
-        cbn in i.
-        destruct i as [? | i]; [contradiction|].
-
-        tauto.
+        rewrite Hcond2 in i; tauto.
 
     - (* Proc_OutCh x y p q *)
       cbn; intros s Hin.
@@ -682,28 +906,19 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
-      1: subst s; tauto.
+      1: tauto.
+
+      (* The complex conditions *)
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 2: s in gamma *)
       match goal with |- context[if ?p then _ else _] => destruct p end.
-      + (* s in gamma *)
-        rewrite filter_In in i.
-        rewrite negb_eqb_true_iff in i.
-        rewrite <- (cp_channels _ _ _ Hcp1) in i.
-        cbn in i.
+      + rewrite Hcond1 in i; tauto.
 
-        tauto.
-
-      + clear n0.
-        (* Case 3: s in delta *)
+      + (* Case 3: s in delta *)
         match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-        (* s in delta *)
-        rewrite filter_In in i.
-        rewrite negb_eqb_true_iff in i.
-        rewrite <- (cp_channels _ _ _ Hcp2) in i.
-        cbn in i.
-
-        tauto.
+        rewrite Hcond2 in i; tauto.
 
     - (* Proc_OutChAndSplit *)
       cbn; intros s Hin.
@@ -711,23 +926,15 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       destruct (eqb_spec x s); [tauto|].
       destruct (in_dec eq_dec s (map fst gamma)); [tauto|].
 
+      (* The complex conditions *)
+      pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp2) as Hcond2.
+
       match goal with |- context[if ?p then _ else _] => destruct p end.
-      + rewrite filter_In in i.
-        rewrite <- (cp_channels _ _ _ Hcp1) in i.
-        destruct (in_dec eq_dec s (map fst gamma)); [tauto|].
-        rewrite negb_eqb_true_iff in i.
-        cbn in i.
-        rewrite map_app, in_app_iff in i.
-        tauto.
+      + rewrite Hcond1 in i; tauto.
 
       + match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-        rewrite filter_In in i.
-        rewrite <- (cp_channels _ _ _ Hcp2) in i.
-        destruct (in_dec eq_dec s (map fst gamma)); [tauto|].
-        rewrite negb_eqb_true_iff in i.
-        cbn in i.
-        rewrite map_app, in_app_iff in i.
-        tauto.
+        rewrite Hcond2 in i; tauto.
 
     - (* Proc_InCh x y p *)
       cbn; intros s Hin.
@@ -748,40 +955,24 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       (* Case 1: s = x *)
       destruct (eqb_spec x s); [tauto|].
 
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp) as Hcond.
+
       (* Case 2: s in gamma *)
       match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-      (* s in gamma *)
-      rewrite filter_In in i.
-      rewrite <- (cp_channels _ _ _ Hcp) in i.
-      rewrite negb_eqb_true_iff in i.
-      cbn in i.
-
-      (* y not in gamma *)
-      apply cp_senv_valid in Hcp.
-      rewrite senv_valid_cons in Hcp.
-
-      destruct i as ([i | i] & Hneq); [|tauto].
-      contradiction.
+      rewrite Hcond in i.
+      tauto.
 
     - (* Proc_Client x y p *)
       cbn; intros s Hin.
       (* Case 1: s = x *)
       destruct (eqb_spec x s); [tauto|].
 
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp) as Hcond.
+
       (* Case 2: s in gamma *)
       match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-      (* s in gamma *)
-      rewrite filter_In in i.
-      rewrite <- (cp_channels _ _ _ Hcp) in i.
-      rewrite negb_eqb_true_iff in i.
-      cbn in i.
-
-      (* y not in gamma *)
-      apply cp_senv_valid in Hcp.
-      rewrite senv_valid_cons in Hcp.
-
-      destruct i as ([i | i] & Hneq); [|tauto].
-      contradiction.
+      rewrite Hcond in i.
+      tauto.
 
     - (* Proc_ClientNull x p *)
       cbn; intros s Hin.
@@ -791,7 +982,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       (* Case 2: s in gamma *)
       match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-      rewrite <- (cp_channels _ _ _ Hcp) in i.
+      rewrite <- (proc_channels_perm _ _ Hcp) in i.
       tauto.
 
     - (* Proc_ClientSplit x y p *)
@@ -816,21 +1007,18 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       (* Case 2: s in gamma *)
       destruct (in_dec eq_dec s (map fst gamma)); [tauto|].
 
+      rewrite Permutation_middle in Hcp1, Hcp2.
+      pose proof (proc_channels_filter_app _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_app _ _ _ Hcp2) as Hcond2.
+      cbn in Hcond1, Hcond2.
+
       (* Case 3: s in delta1 *)
       match goal with |- context[if ?p then _ else _] => destruct p end.
-      + rewrite filter_In in i.
-        rewrite <- (cp_channels _ _ _ Hcp1) in i.
-        cbn in i.
-        rewrite map_app, in_app_iff in i.
-        tauto.
+      + rewrite Hcond1 in i; cbn in i; tauto.
 
       + (* Case 4: s in delta2 *)
         match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-        rewrite filter_In in i.
-        rewrite <- (cp_channels _ _ _ Hcp2) in i.
-        cbn in i.
-        rewrite map_app, in_app_iff in i.
-        tauto.
+        rewrite Hcond2 in i; cbn in i; tauto.
 
     - (* Proc_OutTyp x a p *)
       cbn; apply IHHcp.
@@ -846,7 +1034,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       (* Case 2: s in gamma *)
       match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-      rewrite <- (cp_channels _ _ _ Hcp) in i.
+      rewrite <- (proc_channels_perm _ _ Hcp) in i.
       tauto.
 
     - (* Proc_EmptyCase x gamma *)
@@ -854,7 +1042,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       unfold proc_forbidden.
       intros s Hin.
       match goal with |- context[if ?p then _ else _] => destruct p end; auto.
-      contradiction.
+      tauto.
 
     - (* Permutation *)
       intros s Hin; apply IHHcp.
@@ -878,237 +1066,147 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       cbn; intros s t.
       rewrite combine_map_fst; auto.
       intros Hin Hin' Hneq.
-      destruct (in_dec eq_dec s l); try contradiction; auto.
+      destruct (in_dec eq_dec s l); tauto.
 
     - (* Proc_Link *)
       cbn; intros s t.
       (* Case 1: s = w *)
       destruct (eqb_spec w s).
-      + subst s; intros _ Hin Hin'.
-        cbn; tauto.
-
-      + (* Case 2: s = x *)
-        destruct (eqb_spec x s).
-        * subst s; intros _ Hin Hin'.
-          cbn; tauto.
-
-        * (* Case 3: otherwise *)
-          cbn; tauto.
+      2: destruct (eqb_spec x s).
+      all: subst; cbn; tauto.
 
     - (* Proc_Comp *)
       cbn; intros s t.
       (* x not in gamma, delta *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      assert (Hx1 : ~ In x (map fst gamma)) by eauto with senv_valid.
+      assert (Hx2 : ~ In x (map fst delta)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s.
-        (* senv_valid *)
-        apply cp_senv_valid in Hcp1, Hcp2.
-        rewrite senv_valid_cons in Hcp1, Hcp2.
-
-        (* Simplify goal *)
-        rewrite map_app; rewrite in_app_iff; cbn.
-        tauto.
+        rewrite map_app, in_app_iff; tauto.
 
       + (* Case 2: s in gamma *)
         match goal with |- context[if ?p then _ else _] => destruct p end.
-        * (* s in gamma *)
-          rewrite filter_In in i.
-          rewrite negb_eqb_true_iff in i.
-          rewrite <- (cp_channels _ _ _ Hcp1) in i.
-          cbn in i.
-          assert (i' : In s (map fst gamma)) by tauto.
-          intros _.
-
-          (* Apply this fact to IHHcp1 *)
-          specialize (IHHcp1 s t ltac:(cbn; right; auto)).
+        * rewrite Hcond1 in i.
+          specialize (IHHcp1 s t ltac:(cbn; tauto)).
 
           (* Simplify goal *)
+          intros _.
           rewrite map_app.
-          repeat rewrite in_app_iff.
-          rewrite filter_In.
-          rewrite negb_eqb_true_iff.
-          rewrite <- (cp_channels _ _ _ Hcp2); cbn.
+          do 2 rewrite in_app_iff.
+          rewrite Hcond2.
 
           (* If t in gamma then it is covered by IHHcp1, otherwise t in delta and it is covered by proc_channels *)
           intros Hin Hneq.
           destruct Hin as [Hin | Hin].
-          -- specialize (IHHcp1 ltac:(cbn; right; auto) Hneq); auto.
-          -- right; split; auto.
-             intros Heq; subst t; tauto.
+          -- specialize (IHHcp1 ltac:(cbn; tauto) Hneq); auto.
+          -- auto.
 
-        * (* s not in gamma *)
-          rewrite filter_In in n0.
-          rewrite negb_eqb_true_iff in n0.
-          rewrite <- (cp_channels _ _ _ Hcp1) in n0.
-          cbn in n0.
-          assert (n0' : ~ In s (map fst gamma)) by tauto.
+        * rewrite Hcond1 in n0.
 
           (* Case 3: s in delta *)
           match goal with |- context[if ?p then _ else _] => destruct p end.
-          -- (* s in delta *)
-             rewrite filter_In in i.
-             rewrite negb_eqb_true_iff in i.
-             rewrite <- (cp_channels _ _ _ Hcp2) in i.
-             cbn in i.
-             assert (i' : In s (map fst delta)) by tauto.
-             intros _.
-
-             (* Apply this fact to IHHcp2 *)
-             specialize (IHHcp2 s t ltac:(cbn; right; auto)).
+          -- rewrite Hcond2 in i.
+             specialize (IHHcp2 s t ltac:(cbn; tauto)).
 
              (* Simplify goal *)
+             intros _.
              rewrite map_app.
-             repeat rewrite in_app_iff.
-             rewrite filter_In.
-             rewrite negb_eqb_true_iff.
-             rewrite <- (cp_channels _ _ _ Hcp1); cbn.
+             do 2 rewrite in_app_iff.
+             rewrite Hcond1.
 
              (* Symmetric to the case above *)
              intros Hin Hneq.
              destruct Hin as [Hin | Hin].
-             ++ right; split; auto.
-                intros Heq; subst t; tauto.
-             ++ specialize (IHHcp2 ltac:(cbn; right; auto) Hneq); auto.
+             ++ auto.
+             ++ specialize (IHHcp2 ltac:(cbn; tauto) Hneq); auto.
 
           -- (* Case 4: s not in gamma, delta *)
-             rewrite filter_In in n1.
-             rewrite negb_eqb_true_iff in n1.
-             rewrite <- (cp_channels _ _ _ Hcp2) in n1.
-             cbn in n1.
-
-             rewrite map_app, in_app_iff.
-             tauto.
+             rewrite Hcond2 in n1.
+             rewrite map_app, in_app_iff; tauto.
 
     - (* Proc_OutCh *)
       cbn; intros s t.
-      (* y not in gamma, x not in delta *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
+      assert (Hx : ~ In x (map fst delta)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s; intros _.
-
-        (* Simplify goal *)
+        rewrite Hcond1.
+        specialize (IHHcp2 x t ltac:(cbn; tauto)).
         rewrite map_app.
-        repeat rewrite in_app_iff.
-        rewrite filter_In.
-        rewrite negb_eqb_true_iff.
-        rewrite <- (cp_channels _ _ _ Hcp1); cbn.
-
-        (* Simplify IHHcp2 *)
-        specialize (IHHcp2 x t ltac:(cbn; left; auto)).
+        do 2 rewrite in_app_iff.
 
         (* Since s <> t, either t in gamma or t in delta *)
         intros Hin Hneq.
-        destruct Hin as [? | Hin]; [contradiction|].
+        destruct Hin as [? | Hin]; [tauto|].
         destruct Hin as [Hin | Hin].
-        -- left; split; auto.
-           intros Heq; subst t; tauto.
-        -- right.
-           apply (IHHcp2 ltac:(cbn; right; auto) Hneq).
+        -- auto.
+        -- right; apply (IHHcp2 ltac:(cbn; tauto) Hneq).
 
-      + intros Hin; destruct Hin as [? | Hin]; [contradiction|].
+      + intros Hin; destruct Hin as [? | Hin]; [tauto|].
         rewrite map_app, in_app_iff in Hin.
         (* Case 2: s in gamma *)
         match goal with |- context[if ?p then _ else _] => destruct p end.
-        * clear Hin.
-          (* s in gamma *)
-          rewrite filter_In in i.
-          rewrite negb_eqb_true_iff in i.
-          rewrite <- (cp_channels _ _ _ Hcp1) in i; cbn in i.
-          assert (i' : In s (map fst gamma)) by tauto.
-
-          (* Simplify goal *)
-          cbn.
+        * rewrite Hcond1 in i; clear Hin.
+          rewrite Hcond2; cbn.
           rewrite map_app.
-          repeat rewrite in_app_iff.
-          rewrite filter_In.
-          rewrite negb_eqb_true_iff.
-          rewrite <- (cp_channels _ _ _ Hcp2); cbn.
+          do 2 rewrite in_app_iff.
 
           (* Simplify IHHcp1 *)
-          specialize (IHHcp1 s t ltac:(cbn; right; auto)).
+          specialize (IHHcp1 s t ltac:(cbn; tauto)).
 
           intros Hin Hneq.
           destruct Hin as [Hin | [Hin | Hin]].
           -- auto.
-          -- right; left; apply (IHHcp1 ltac:(cbn; right; auto) Hneq).
-          -- right; right; split; auto.
-             intros Heq; subst t; tauto.
+          -- right; left; apply (IHHcp1 ltac:(cbn; tauto) Hneq).
+          -- right; right; auto.
 
         * (* Case 3: s not in gamma, but Hin assumes s in gamma or delta, so s in delta *)
-          rewrite filter_In in n0.
-          rewrite <- (cp_channels _ _ _ Hcp1) in n0.
-          cbn in n0.
-          rewrite negb_eqb_true_iff in n0.
-          assert (n0' : ~ In s (map fst gamma)) by (revert n0; apply list_nin_helper; tauto).
-          destruct Hin as [Hin | Hin]; [contradiction|].
-
+          rewrite Hcond1 in n0.
+          destruct Hin as [Hin | Hin]; [tauto|].
           match goal with |- context[if ?p then _ else _] => destruct p end.
-          2: { rewrite filter_In, negb_eqb_true_iff in n1.
-               rewrite <- (cp_channels _ _ _ Hcp2) in n1.
-               cbn in n1; tauto.
-          }
-
-          (* Simplify goal *)
-          clear i.
+          2: rewrite Hcond2 in n1; tauto.
+          rewrite Hcond1.
           rewrite map_app.
-          repeat rewrite in_app_iff.
-          rewrite filter_In.
-          rewrite negb_eqb_true_iff.
-          rewrite <- (cp_channels _ _ _ Hcp1); cbn.
+          do 2 rewrite in_app_iff.
 
           (* Simplify IHHcp2 *)
-          specialize (IHHcp2 s t ltac:(cbn; right; auto)).
+          specialize (IHHcp2 s t ltac:(cbn; tauto)).
 
           intros Hin' Hneq.
           destruct Hin' as [Hin' | [Hin' | Hin']].
           -- subst t.
-             specialize (IHHcp2 ltac:(cbn; left; auto) Hneq).
-             auto.
-          -- right; split; auto.
-             intros Heq; subst t; tauto.
-          -- specialize (IHHcp2 ltac:(cbn; right; auto) Hneq).
-             auto.
+             left; apply (IHHcp2 ltac:(cbn; tauto) Hneq).
+          -- right; auto.
+          -- left; apply (IHHcp2 ltac:(cbn; tauto) Hneq).
 
     - (* Proc_OutChAndSplit *)
       cbn; intros s t.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
+
+      pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s; intros _.
+        rewrite Hcond1.
+        do 2 rewrite map_app.
+        do 4 rewrite in_app_iff.
+
         intros Hin Hneq.
-        destruct Hin as [? | Hin]; [tauto|].
-        do 2 rewrite map_app, in_app_iff in Hin.
-        do 2 rewrite in_app_iff.
-        rewrite map_app, in_app_iff in Hcp1', Hcp2'.
-
-        (* Simplify goal *)
-        rewrite <- (proc_channels_perm _ _ Hcp1); cbn.
-        rewrite (eqb_refl y); cbn.
-        destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-        rewrite map_app, filter_app.
-        rewrite forallb_filter_nil.
-        1: rewrite forallb_filter_id.
-        2,3: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-        2: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-        2: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-        cbn.
-
-        destruct Hin as [Hin | [Hin | Hin]].
-        1,2: auto.
-        specialize (IHHcp2 x t ltac:(cbn; left; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
-        auto.
+        destruct Hin as [Hin | [Hin | [Hin | Hin]]].
+        1,2,3: tauto.
+        right; right.
+        apply (IHHcp2 x t ltac:(cbn; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
 
         + destruct (in_dec eq_dec s (map fst gamma)).
           * intros _.
@@ -1118,116 +1216,47 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
             intros Hin Hneq.
             destruct Hin as [Hin | [Hin | Hin]].
             -- subst t.
-               specialize (IHHcp2 s x ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; left; auto) Hneq).
-               auto.
-            -- specialize (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; auto) Hneq).
-               auto.
-            -- specialize (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
-               auto.
+               right; apply (IHHcp2 s x ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; tauto) Hneq).
+            -- left; apply (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; tauto) Hneq).
+            -- right; apply (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
 
           * (* Case 3: s in delta1 *)
             match goal with |- context[if ?p then _ else _] => destruct p end.
-            -- rewrite <- (proc_channels_perm _ _ Hcp1) in i.
-               cbn in i.
-               rewrite eqb_refl in i; cbn in i.
-               destruct (in_dec eq_dec y (map fst gamma)).
-               1: rewrite map_app, in_app_iff in Hcp1'; tauto.
+            -- rewrite Hcond1 in i.
+               rewrite Hcond2.
 
-               rewrite <- (proc_channels_perm _ _ Hcp2); cbn.
-               rewrite eqb_refl; cbn.
-               destruct (in_dec eq_dec x (map fst gamma)).
-               1: rewrite map_app, in_app_iff in Hcp2'; tauto.
-
-               rewrite map_app, filter_app in i.
-               rewrite (map_app fst gamma delta2), filter_app.
-               rewrite forallb_filter_nil in i.
-               1: rewrite forallb_filter_id in i.
-               1: rewrite forallb_filter_nil.
-               1: rewrite forallb_filter_id.
-               2,3,4,5: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-               4: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-               4: rewrite negb_eqb_true_iff; intros Heq; subst z; rewrite map_app, in_app_iff in Hcp1'; tauto.
-               2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-               2: rewrite negb_eqb_true_iff; intros Heq; subst z; rewrite map_app, in_app_iff in Hcp2'; tauto.
-               cbn in i; cbn.
-
-               intros _ Hin Hneq.
-               rewrite Permutation_app_swap_app in Hin.
-               rewrite map_app, in_app_iff in Hin.
-               rewrite app_assoc, in_app_iff, <- map_app.
-               destruct Hin as [Hin | [Hin | Hin]].
-               1: auto.
-               2: right; left; auto.
-               right; right.
-               apply IHHcp1; auto.
-               1: right; rewrite map_app, in_app_iff; auto.
-               1: right; rewrite map_app, in_app_iff; auto.
+               intros _ Hin Hneq; cbn.
+               do 2 rewrite map_app, in_app_iff in Hin.
+               do 2 rewrite in_app_iff.
+               destruct Hin as [Hin | [Hin | [Hin | Hin]]].
+               1,2,4: tauto.
+               right; right; right.
+               apply (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
 
             -- (* Case 4: s in delta2 *)
                match goal with |- context[if ?p then _ else _] => destruct p end.
-               ++ rewrite <- (proc_channels_perm _ _ Hcp2) in i.
-                  cbn in i.
-                  rewrite eqb_refl in i; cbn in i.
-                  destruct (in_dec eq_dec x (map fst gamma)).
-                  1: rewrite map_app, in_app_iff in Hcp2'; tauto.
-
-                  rewrite <- (proc_channels_perm _ _ Hcp1); cbn.
-                  rewrite eqb_refl; cbn.
-                  destruct (in_dec eq_dec y (map fst gamma)).
-                  1: rewrite map_app, in_app_iff in Hcp1'; tauto.
-
-                  rewrite map_app, filter_app in i.
-                  rewrite (map_app fst gamma delta1), filter_app.
-                  rewrite forallb_filter_nil in i.
-                  1: rewrite forallb_filter_id in i.
-                  1: rewrite forallb_filter_nil.
-                  1: rewrite forallb_filter_id.
-                  2,3,4,5: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-                  2: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-                  2: rewrite negb_eqb_true_iff; intros Heq; subst z; rewrite map_app, in_app_iff in Hcp1'; tauto.
-                  2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-                  2: rewrite negb_eqb_true_iff; intros Heq; subst z; rewrite map_app, in_app_iff in Hcp2'; tauto.
-                  cbn in i; cbn.
+               ++ rewrite Hcond2 in i.
+                  rewrite Hcond1.
 
                   intros _ Hin Hneq.
-                  rewrite app_assoc in Hin.
-                  rewrite map_app, in_app_iff in Hin.
-                  rewrite app_assoc, in_app_iff, <- map_app.
-                  destruct Hin as [Hin | [Hin | Hin]].
-                  1: subst t; specialize (IHHcp2 s x ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; left; auto) Hneq); auto.
-                  1: left; auto.
-                  right.
-                  apply IHHcp2; auto.
-                  1: right; rewrite map_app, in_app_iff; auto.
-                  1: right; rewrite map_app, in_app_iff; auto.
+                  do 2 rewrite map_app, in_app_iff in Hin.
+                  do 2 rewrite in_app_iff.
+                  destruct Hin as [Hin | [Hin | [Hin | Hin]]].
+                  2,3: tauto.
+                  1: subst t; right; right; apply (IHHcp2 s x ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; tauto) Hneq).
+                  right; right.
+                  apply (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
 
                ++ (* Case 5: s not a channel *)
-                  intros Hin _ _.
-                  destruct Hin as [Hin | Hin]; [tauto|].
-                  rewrite <- (proc_channels_perm _ _ Hcp1) in n1.
-                  rewrite <- (proc_channels_perm _ _ Hcp2) in n2.
-                  cbn in n1, n2.
-                  rewrite eqb_refl in n1, n2; cbn in n1, n2.
-                  rewrite map_app, in_app_iff in Hcp1', Hcp2'.
-                  destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-                  destruct (in_dec eq_dec x (map fst gamma)); [tauto|].
-                  rewrite map_app, filter_app in n1, n2.
-                  rewrite forallb_filter_nil in n1, n2.
-                  1: rewrite forallb_filter_id in n1, n2.
-                  2,3,4,5: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-                  2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-                  3: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-                  2,3: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-                  cbn in n1, n2.
-                  do 2 rewrite map_app, in_app_iff in Hin.
+                  rewrite Hcond1 in n1.
+                  rewrite Hcond2 in n2.
+                  intros Hin; do 2 rewrite map_app, in_app_iff in Hin.
                   tauto.
 
     - (* Proc_InCh *)
       cbn; intros s t.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      repeat rewrite senv_valid_cons in Hcp'.
-      cbn in Hcp'.
+      assert (Hx : x <> y) by eauto with senv_valid.
+      assert (Hy : ~ In y (map fst gamma)) by (eauto with senv_valid).
 
       (* Case 1: s = y *)
       destruct (eqb_spec y s).
@@ -1238,7 +1267,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       (* Case 2: s = x or s in gamma *)
       + intros Hin Hin' Hneq.
-        apply (IHHcp s t ltac:(cbn; clear IHHcp; tauto) ltac:(cbn; clear IHHcp; tauto) Hneq).
+        apply (IHHcp s t ltac:(cbn; tauto) ltac:(cbn; tauto) Hneq).
 
     - (* Proc_OutLeft *)
       cbn; auto.
@@ -1252,26 +1281,19 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_Server *)
       cbn; intros s t.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp) as Hcond.
 
       (* Case 1: s = x *)
       intros Hin.
       destruct Hin as [Hin | Hin].
       + subst s.
         intros Hin' Hneq.
-        destruct Hin' as [? | Hin']; [contradiction|].
+        destruct Hin' as [? | Hin']; [tauto|].
 
-        (* Simplify goal *)
         rewrite eqb_refl.
-        rewrite filter_In.
-        rewrite <- (cp_channels _ _ _ Hcp).
-        rewrite negb_eqb_true_iff; cbn.
-
-        split; auto.
-        intros Heq; subst t.
-        tauto.
+        rewrite Hcond; auto.
 
       + destruct (eqb_spec x s).
         1: subst s; contradiction.
@@ -1282,39 +1304,25 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           intros Hin' Hneq.
           destruct Hin' as [Hin' | Hin'].
           1: left; auto.
-          right.
-          apply (IHHcp s t ltac:(cbn; right; auto) ltac:(cbn; right; auto) Hneq).
+          right; apply (IHHcp s t ltac:(cbn; tauto) ltac:(cbn; tauto) Hneq).
 
-        * rewrite filter_In in n0.
-          rewrite negb_eqb_true_iff in n0.
-          rewrite <- (cp_channels _ _ _ Hcp) in n0.
-          cbn in n0.
-          apply list_nin_helper in n0.
-          2: tauto.
-          contradiction.
+        * rewrite Hcond in n0; tauto.
 
-    - (* Proc_Server *)
+    - (* Proc_Client *)
       cbn; intros s t.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp) as Hcond.
 
       (* Case 1: s = x *)
       intros Hin.
       destruct Hin as [Hin | Hin].
       + subst s.
         intros Hin' Hneq.
-        destruct Hin' as [? | Hin']; [contradiction|].
+        destruct Hin' as [? | Hin']; [tauto|].
 
-        (* Simplify goal *)
         rewrite eqb_refl.
-        rewrite filter_In.
-        rewrite <- (cp_channels _ _ _ Hcp).
-        rewrite negb_eqb_true_iff; cbn.
-
-        split; auto.
-        intros Heq; subst t.
-        tauto.
+        rewrite Hcond; auto.
 
       + destruct (eqb_spec x s).
         1: subst s; contradiction.
@@ -1325,16 +1333,9 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           intros Hin' Hneq.
           destruct Hin' as [Hin' | Hin'].
           1: left; auto.
-          right.
-          apply (IHHcp s t ltac:(cbn; right; auto) ltac:(cbn; right; auto) Hneq).
+          right; apply (IHHcp s t ltac:(cbn; tauto) ltac:(cbn; tauto) Hneq).
 
-        * rewrite filter_In in n0.
-          rewrite negb_eqb_true_iff in n0.
-          rewrite <- (cp_channels _ _ _ Hcp) in n0.
-          cbn in n0.
-          apply list_nin_helper in n0.
-          2: tauto.
-          contradiction.
+        * rewrite Hcond in n0; tauto.
 
     - (* Proc_Client Null *)
       cbn; intros s t.
@@ -1343,7 +1344,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       + subst s; intros _.
         intros Hin' Hneq.
         destruct Hin' as [? | Hin']; [contradiction|].
-        rewrite <- (cp_channels _ _ _ Hcp); auto.
+        rewrite <- (proc_channels_perm _ _ Hcp); auto.
 
       + (* Case 2: s in gamma *)
         match goal with |- context[if ?p then _ else _] => destruct p end.
@@ -1351,37 +1352,37 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           destruct Hin as [Hin | Hin].
           1: left; auto.
           right.
-          rewrite <- (cp_channels _ _ _ Hcp) in i; auto.
+          rewrite <- (proc_channels_perm _ _ Hcp) in i.
+          auto.
 
-        * rewrite <- (cp_channels _ _ _ Hcp) in n0.
-          intros Hin; tauto.
+        * rewrite <- (proc_channels_perm _ _ Hcp) in n0.
+          tauto.
 
     - (* Proc_ClientSplit *)
       cbn; intros s t.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      repeat rewrite senv_valid_cons in Hcp'; cbn in Hcp'.
+      assert (Hx : x <> y) by (eauto with senv_valid).
+      assert (Hy : ~ In y (map fst gamma)) by (eauto with senv_valid).
 
       (* Case 1: s = y *)
       destruct (eqb_spec y s).
       + subst s.
-        intros Hin; clear IHHcp; destruct Hin as [Hin | Hin]; [symmetry in Hin|]; tauto.
+        intros Hin; clear IHHcp; destruct Hin as [Hin | Hin]; tauto.
 
       + (* Case 2: s = x or s in gamma *)
         clear n.
         intros Hin Hin' Hneq.
-        apply (IHHcp s t ltac:(cbn; clear IHHcp; tauto) ltac:(cbn; clear IHHcp; tauto) Hneq).
+        apply (IHHcp s t ltac:(cbn; tauto) ltac:(cbn; tauto) Hneq).
 
     - (* Proc_CompAndSplit *)
       cbn; intros s t Hin Hin' Hneq.
-      (* x not in gamma, delta1, delta2 *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
-      rewrite map_app, in_app_iff in Hcp1', Hcp2'.
+      assert (Hx1 : ~ In x (map fst (gamma ++ delta1))) by eauto with senv_valid.
+      assert (Hx2 : ~ In x (map fst (gamma ++ delta2))) by eauto with senv_valid.
+      rewrite map_app, in_app_iff in Hx1, Hx2.
+      do 2 rewrite map_app, in_app_iff in Hin, Hin'.
 
-      do 2 rewrite map_app in Hin, Hin'.
-      do 2 rewrite in_app_iff in Hin, Hin'.
+      rewrite Permutation_middle in Hcp1, Hcp2.
+      pose proof (proc_channels_filter_app _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_app _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -1389,71 +1390,44 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       (* Case 2: s in gamma *)
       destruct (in_dec eq_dec s (map fst gamma)).
-      + cbn.
+      + rewrite in_app_iff.
         rewrite <- or_assoc in Hin'.
         destruct Hin' as [Hin' | Hin'].
-        * specialize (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
-          rewrite in_app_iff; auto.
-        * specialize (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
-          rewrite in_app_iff; auto.
+        * left; apply (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
+        * right; apply (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; auto) ltac:(cbn; right; rewrite map_app, in_app_iff; auto) Hneq).
 
       + (* Case 3: s in delta1 *)
         match goal with |- context[if ?p then _ else _] => destruct p end.
-        * cbn.
-          rewrite in_app_iff.
-          rewrite filter_In.
-          rewrite <- (cp_channels _ _ _ Hcp2); cbn.
-          rewrite map_app, in_app_iff.
-          (* rewrite (or_comm (In t (map fst delta1))) in Hin'. *)
+        * rewrite Hcond1 in i.
+          rewrite Hcond2.
+          cbn in i.
+          destruct i as [i | i]; [tauto|].
+          rewrite in_app_iff; cbn.
+
           rewrite <- or_assoc in Hin'.
-
-          (* Simplify i *)
-          rewrite filter_In in i.
-          rewrite <- (cp_channels _ _ _ Hcp1) in i; cbn in i.
-          rewrite map_app, in_app_iff in i.
-
           destruct Hin' as [Hin' | Hin'].
-          -- specialize (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) Hneq).
-             tauto.
-          -- destruct Hcp2' as (_ & Hcp2').
-             apply senv_app in Hcp2'.
-             destruct Hcp2' as (_ & _ & Hcp2').
-             unfold senv_disjoint in Hcp2'.
-             assert (~ In t (map fst gamma)) by (clear IHHcp1 IHHcp2; firstorder).
-             destruct (in_dec eq_dec t (map fst gamma)); tauto.
+          -- left; apply (IHHcp1 s t ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) Hneq).
+          -- tauto.
 
         * (* Case 4: s in delta 2 *)
           match goal with |- context[if ?p then _ else _] => destruct p end.
-          -- cbn.
-             rewrite in_app_iff.
-             rewrite filter_In.
-             rewrite <- (cp_channels _ _ _ Hcp1); cbn.
-             rewrite map_app, in_app_iff.
+          -- rewrite Hcond1 in n1.
+             rewrite Hcond2 in i.
+             cbn in n1, i.
+             assert (i' : In s (map fst delta2)) by tauto.
+             rewrite Hcond1.
+             rewrite in_app_iff; cbn.
              rewrite (or_comm (In t (map fst delta1))) in Hin'.
              rewrite <- or_assoc in Hin'.
 
-             (* Simplify i *)
-             rewrite filter_In in i.
-             rewrite <- (cp_channels _ _ _ Hcp2) in i; cbn in i.
-             rewrite map_app, in_app_iff in i.
-
              destruct Hin' as [Hin' | Hin'].
-             ++ specialize (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) Hneq).
-                tauto.
-             ++ destruct Hcp1' as (_ & Hcp1').
-             apply senv_app in Hcp1'.
-             destruct Hcp1' as (_ & _ & Hcp1').
-             unfold senv_disjoint in Hcp1'.
-             assert (~ In t (map fst gamma)) by (clear IHHcp1 IHHcp2; firstorder).
-             destruct (in_dec eq_dec t (map fst gamma)); tauto.
+             ++ right; apply (IHHcp2 s t ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) ltac:(cbn; right; rewrite map_app, in_app_iff; tauto) Hneq).
+             ++ tauto.
 
           -- (* Case 5 : s not a channel *)
-             rewrite filter_In in n1, n2.
-             destruct (in_dec eq_dec s (map fst gamma)); try contradiction.
-             rewrite <- (cp_channels _ _ _ Hcp1) in n1.
-             rewrite <- (cp_channels _ _ _ Hcp2) in n2.
+             rewrite Hcond1 in n1.
+             rewrite Hcond2 in n2.
              cbn in n1, n2.
-             rewrite map_app, in_app_iff in n1, n2.
              tauto.
 
     - (* Proc_OutTyp *)
@@ -1463,7 +1437,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_OutUnit *)
       cbn; intros s t H1 H2.
-      destruct H1; destruct H2; try contradiction; subst s t; contradiction.
+      destruct H1; destruct H2; try tauto; subst; tauto.
 
     - (* Proc_InUnit *)
       cbn; intros s t.
@@ -1471,15 +1445,14 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       destruct (eqb_spec x s).
       + subst s.
         intros _ Hin Hneq.
-        destruct Hin as [Hin | Hin]; [contradiction|].
-        rewrite <- (cp_channels _ _ _ Hcp); auto.
+        destruct Hin as [Hin | Hin]; [tauto|].
+        rewrite <- (proc_channels_perm _ _ Hcp); auto.
 
       + (* Case 2: s in gamma *)
         intros Hin.
-        destruct Hin as [Hin | Hin]; [contradiction|].
+        destruct Hin as [Hin | Hin]; [tauto|].
         match goal with |- context[if ?p then _ else _] => destruct p end.
-        2: rewrite <- (cp_channels _ _ _ Hcp) in n0; contradiction.
-        clear i.
+        2: rewrite <- (proc_channels_perm _ _ Hcp) in n0; tauto.
         intros Hin' Hneq.
         destruct Hin' as [Hin' | Hin'].
         1: left; auto.
@@ -1490,7 +1463,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       unfold proc_forbidden.
       cbn [map fst].
       match goal with |- context[if ?p then _ else _] => destruct p end.
-      2: contradiction.
+      2: tauto.
       intros _ Hin Hneq.
       auto.
 
@@ -1534,6 +1507,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     all: rewrite str_list_repl_ident; auto; congruence.
   Qed.
 
+  Hint Rewrite proc_rename_ident : proc_simpl.
+
   Lemma cp_proc_rename :
   forall p s t gamma,
   cp p gamma ->
@@ -1560,18 +1535,11 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       rewrite combine_map_fst; auto.
       destruct (in_dec eq_dec s l).
       + left; split; auto.
-        unfold senv_rename.
-        erewrite combine_map.
-        Unshelve.
-        4: exact (fun x => if eqb x s then t else x).
-        4: exact id.
-        2: intros z; destruct z; cbn; destruct (eqb t0 s); auto.
-        2: intros z; destruct z; cbn; destruct (eqb t0 s); auto.
-        fold (str_list_repl l s t).
-        constructor.
-        2,3: rewrite map_id; auto.
-        2: unfold str_list_repl; rewrite length_map; auto.
-        apply str_list_repl_nodup; auto.
+        rewrite senv_rename_combine; auto.
+        constructor; auto.
+        * apply str_list_repl_nodup; auto.
+        * rewrite <- H1; apply str_list_repl_length.
+
       + right; split; auto.
         rewrite str_list_repl_nin; auto.
 
@@ -1584,21 +1552,23 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         2: symmetry; rewrite eqb_neq; auto.
         cbn in Hallow.
         left; split; auto.
-        constructor; firstorder.
+        constructor; tauto.
 
       + (* Case 2: s = x *)
         destruct (eqb_spec x s).
         * subst s.
+          cbn in Hallow.
           left; split; auto.
-          constructor; firstorder.
+          constructor; intros Heq; symmetry in Heq; tauto.
         * right; split; auto; tauto.
 
     - (* Proc_Comp *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      assert (Hx1 : ~ In x (map fst gamma)) by eauto with senv_valid.
+      assert (Hx2 : ~ In x (map fst delta)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -1609,30 +1579,18 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       + (* Case 2: s in gamma *)
         match type of Hallow with context[if ?p then _ else _] => destruct p end.
-        * (* s in gamma *)
-          rewrite filter_In in i.
-          destruct i as (i & _).
-          rewrite <- cp_channels in i.
-          2: apply Hcp1.
-          cbn in i.
-          destruct i as [? | i]; [contradiction|].
-
-          (* s in gamma -> s not in delta *)
-          unfold senv_disjoint in H.
-          specialize (H _ i) as i'.
+        * rewrite Hcond1 in i.
+          assert (~ In s (map fst delta)) by (eauto with senv_disjoint).
 
           (* Simplify Hallow *)
+          rewrite Hcond2 in Hallow.
           rewrite in_app_iff in Hallow.
-          rewrite filter_In in Hallow.
-          rewrite Bool.negb_true_iff in Hallow.
-          rewrite eqb_neq in Hallow.
-          rewrite <- (cp_channels _ _ _ Hcp2) in Hallow.
-          cbn in Hallow.
 
           (* Simplify IHHcp1 *)
           specialize (IHHcp1 s t Hneq ltac:(tauto)).
           cbn [map fst] in IHHcp1.
-          destruct IHHcp1 as [(_ & IHHcp1) | ?]; [|firstorder].
+          destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)].
+          2: cbn in IHHcp1; tauto.
           cbn in IHHcp1; fold (senv_rename gamma s t) in IHHcp1.
           replace (eqb x s) with false in IHHcp1 by (symmetry; rewrite eqb_neq; auto).
 
@@ -1643,58 +1601,31 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           2: cbn; tauto.
           specialize (IHHcp2 ltac:(auto)).
           cbn [map fst] in IHHcp2.
-          destruct IHHcp2 as [? | (_ & IHHcp2)]; [firstorder|].
+          destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)].
+          1: cbn in IHHcp2; tauto.
 
           left; split.
-          1: rewrite map_app; rewrite in_app_iff; left; auto.
+          1: rewrite map_app; rewrite in_app_iff; auto.
           rewrite IHHcp2.
           rewrite senv_rename_app.
           rewrite (senv_rename_nin delta); auto.
           constructor; auto.
 
           (* disjointness *)
-          unfold senv_disjoint.
-          intros m Hin.
-          unfold senv_rename in Hin.
-          rewrite map_map in Hin.
-          rewrite in_map_iff in Hin.
-          destruct Hin as (z & Hz1 & Hz2).
-          destruct z.
-          destruct (eqb_spec t0 s); cbn in Hz1; subst m.
-          -- subst t0.
-             intros Hin; apply Hallow; right.
-             split; [tauto|].
-             intros Heq; subst t; tauto.
-          -- apply H.
-             rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+          apply senv_rename_nin_disjoint; auto.
 
-        * rewrite filter_In in n0.
-          rewrite negb_eqb_true_iff in n0.
-          rewrite <- (cp_channels _ _ _ Hcp1) in n0.
-          cbn in n0.
-          assert (n0' : ~ In s (map fst gamma)) by tauto.
+        * rewrite Hcond1 in n0.
 
           (* Case 3: s in delta *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          -- rewrite filter_In in i.
-             destruct i as (i & _).
-             rewrite <- cp_channels in i.
-             2: apply Hcp2.
-             cbn in i.
-             destruct i as [? | i]; [contradiction|].
-
-             (* Simplify Hallow *)
+          -- rewrite Hcond2 in i.
+             rewrite Hcond1 in Hallow.
              rewrite in_app_iff in Hallow.
-             rewrite filter_In in Hallow.
-             rewrite Bool.negb_true_iff in Hallow.
-             rewrite eqb_neq in Hallow.
-             rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
-             cbn in Hallow.
 
              (* Simplify IHHcp2 *)
              specialize (IHHcp2 s t Hneq ltac:(tauto)).
-             cbn [map fst] in IHHcp2.
-             destruct IHHcp2 as [(_ & IHHcp2) | ?]; [|firstorder].
+             cbn [map fst In] in IHHcp2.
+             destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
              cbn in IHHcp2; fold (senv_rename delta s t) in IHHcp2.
              replace (eqb x s) with false in IHHcp2 by (symmetry; rewrite eqb_neq; auto).
 
@@ -1704,41 +1635,22 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              2: apply Hcp1.
              2: cbn; tauto.
              specialize (IHHcp1 ltac:(auto)).
-             cbn [map fst] in IHHcp1.
-             destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
+             cbn [map fst In] in IHHcp1.
+             destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)]; [tauto|].
 
              left; split.
-             1: rewrite map_app; rewrite in_app_iff; right; auto.
+             1: rewrite map_app, in_app_iff; right; auto.
              rewrite IHHcp1.
              rewrite senv_rename_app.
              rewrite (senv_rename_nin gamma); auto.
              constructor; auto.
 
-             (* disjointness *)
-             unfold senv_disjoint.
-             intros m Hin.
-             unfold senv_disjoint in H.
-             specialize (H _ Hin) as Hm.
-             unfold senv_rename.
-             rewrite map_map.
-             rewrite in_map_iff.
-             intros Hin'.
-             destruct Hin' as (z & Hz1 & Hz2).
-             destruct z.
-             destruct (eqb_spec t0 s); cbn in Hz1; subst m.
-             ++ subst t0.
-                apply Hallow; right.
-                split; [auto|].
-                intros Heq; subst t; tauto.
-             ++ apply Hm; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+             apply senv_disjoint_sym.
+             apply senv_rename_nin_disjoint; auto.
+             apply senv_disjoint_sym; auto.
 
           -- (* Case 4: s not a channel *)
-             rewrite filter_In in n1.
-             rewrite Bool.negb_true_iff in n1.
-             rewrite eqb_neq in n1.
-             rewrite <- (cp_channels _ _ _ Hcp2) in n1.
-             cbn in n1.
-             assert (n1' : ~ In s (map fst delta)) by tauto.
+             rewrite Hcond2 in n1.
 
              (* Simplify IHHcp1, IHHcp2 *)
              specialize (IHHcp1 s t Hneq).
@@ -1749,19 +1661,20 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              2,3: cbn; tauto.
              specialize (IHHcp1 ltac:(auto)).
              specialize (IHHcp2 ltac:(auto)).
-             cbn [map fst] in IHHcp1, IHHcp2.
-             destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
-             destruct IHHcp2 as [? | (_ & IHHcp2)]; [tauto|].
+             cbn [map fst In] in IHHcp1, IHHcp2.
+             destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)]; [tauto|].
+             destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)]; [tauto|].
 
              right; rewrite IHHcp1, IHHcp2; split; auto.
              rewrite map_app; rewrite in_app_iff; tauto.
 
     - (* Proc_OutCh *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
+      assert (Hx : ~ In x (map fst delta)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -1775,53 +1688,34 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         fold (senv_rename gamma x t).
         rewrite senv_rename_nin; auto.
 
-        (* Simplify Hallow *)
+        rewrite Hcond1 in Hallow.
         rewrite in_app_iff in Hallow.
-        rewrite filter_In in Hallow.
-        rewrite negb_eqb_true_iff in Hallow.
-        rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
-        cbn in Hallow.
 
         (* Simplify IHHcp2 *)
         specialize (IHHcp2 x t Hneq ltac:(tauto)).
-        destruct IHHcp2 as [(_ & IHHcp2) | IHHcp2].
-        2: cbn in IHHcp2; tauto.
         cbn in IHHcp2.
+        destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
         rewrite eqb_refl in IHHcp2.
         fold (senv_rename delta x t) in IHHcp2.
         rewrite senv_rename_nin in IHHcp2; [|tauto].
 
         constructor; auto.
-        intros Hin; apply Hallow; left; split; auto.
-        intros Heq; subst t.
-        tauto.
 
       + (* Case 2: s = y *)
         destruct (eqb_spec y s).
         * subst s.
           (* y cannot appear in gamma *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          1: { rewrite filter_In in i.
-               rewrite <- (cp_channels _ _ _ Hcp1) in i.
-               rewrite eqb_refl in i.
-               cbn in i; destruct i; discriminate.
-          }
-
+          rewrite Hcond1 in i; tauto.
           clear n0.
+
           (* Case 2.1: y is part of delta *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          -- rewrite filter_In in i.
-             rewrite negb_eqb_true_iff in i.
-             rewrite <- (cp_channels _ _ _ Hcp2) in i.
-             cbn in i.
-             assert (i' : In y (map fst delta)) by tauto.
+          -- rewrite Hcond2 in i.
 
              (* Simplify Hallow *)
+             rewrite Hcond1 in Hallow.
              rewrite in_app_iff in Hallow.
-             rewrite filter_In in Hallow.
-             rewrite negb_eqb_true_iff in Hallow.
-             rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
-             cbn in Hallow.
 
              (* Simplify goal *)
              left; split.
@@ -1836,33 +1730,15 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              cbn in IHHcp2.
              replace (eqb x y) with false in IHHcp2; [|symmetry; rewrite eqb_neq; auto].
              fold (senv_rename delta y t) in IHHcp2.
-             destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)].
-             2: tauto.
+             destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
 
              constructor; auto.
-
-             (* disjointness *)
-             unfold senv_disjoint.
-             intros m Hm.
-             unfold senv_rename; rewrite map_map.
-             rewrite in_map_iff.
-             intros Hin.
-             destruct Hin as (z & Hz1 & Hz2).
-             destruct z.
-             destruct (eqb_spec t0 y); cbn in Hz1; subst m.
-             ++ subst t0.
-                tauto.
-             ++ unfold senv_disjoint in H0.
-                specialize (H0 _ Hm).
-                apply H0; rewrite in_map_iff.
-                eexists; split; try apply Hz2; auto.
+             apply senv_disjoint_sym.
+             apply senv_rename_nin_disjoint; auto.
+             apply senv_disjoint_sym; auto.
 
           -- (* Case 2.2: y not in delta *)
-             rewrite filter_In in n0.
-             rewrite <- (cp_channels _ _ _ Hcp2) in n0.
-             cbn in n0.
-             rewrite negb_eqb_true_iff in n0.
-             assert (n0' : ~ In y (map fst delta)) by tauto.
+             rewrite Hcond2 in n0.
 
              (* Simplify IHHcp2 *)
              specialize (IHHcp2 y t Hneq).
@@ -1870,8 +1746,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              2: apply Hcp2.
              2: cbn; tauto.
              specialize (IHHcp2 ltac:(auto)).
-             destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2')].
-             1: cbn in IHHcp2; tauto.
+             cbn in IHHcp2.
+             destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2')]; [tauto|].
 
              right; split.
              1: rewrite map_app; rewrite in_app_iff; tauto.
@@ -1879,15 +1755,10 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
         * (* Case 3: s in gamma *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          -- rewrite filter_In in i.
-             rewrite negb_eqb_true_iff in i.
-             rewrite <- (cp_channels _ _ _ Hcp1) in i.
-             cbn in i.
-             assert (i' : In s (map fst gamma)) by tauto.
-
-             (* s not in delta *)
-             unfold senv_disjoint in H0.
-             specialize (H0 _ i') as i''.
+          -- rewrite Hcond1 in i.
+             rewrite Hcond2 in Hallow.
+             cbn in Hallow; rewrite in_app_iff in Hallow.
+             assert (~ In s (map fst delta)) by (eauto with senv_disjoint).
 
              left; split.
              1: right; rewrite map_app; rewrite in_app_iff; auto.
@@ -1904,65 +1775,29 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              2: apply Hcp2.
              2: cbn; tauto.
              specialize (IHHcp2 ltac:(auto)).
+             cbn in IHHcp2.
              destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2')].
-             1: cbn in IHHcp2; tauto.
+             1: tauto.
              rewrite IHHcp2'.
-
-             (* Simplify Hallow *)
-             cbn in Hallow.
-             rewrite in_app_iff in Hallow.
-             rewrite filter_In in Hallow.
-             rewrite <- (cp_channels _ _ _ Hcp2) in Hallow.
-             rewrite negb_eqb_true_iff in Hallow.
-             cbn in Hallow.
 
              (* Simplify IHHcp1 *)
              specialize (IHHcp1 s t Hneq ltac:(tauto)).
-             destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)].
-             2: cbn in IHHcp1; tauto.
              cbn in IHHcp1.
+             destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)]; [|tauto].
              replace (eqb y s) with false in IHHcp1 by (symmetry; rewrite eqb_neq; auto).
              fold (senv_rename gamma s t) in IHHcp1.
 
              constructor; auto.
              ++ (* x not in new gamma *)
-                unfold senv_rename; rewrite map_map.
-                rewrite in_map_iff.
-                intros Hin.
-                destruct Hin as (z & Hz1 & Hz2).
-                destruct z.
-                destruct (eqb_spec t0 s); cbn in Hz1.
-                ** subst t0 t.
-                   apply Hallow; auto.
-                ** subst t0.
-                   apply H; apply in_map_iff; eexists; split; try apply Hz2; auto.
+                apply senv_rename_nin_nin; auto.
 
              ++ (* disjointness *)
-                unfold senv_disjoint.
-                intros m Hm.
-                unfold senv_rename in Hm; rewrite map_map in Hm.
-                rewrite in_map_iff in Hm.
-                destruct Hm as (z & Hz1 & Hz2).
-                destruct z.
-                destruct (eqb_spec t0 s); cbn in Hz1.
-                ** subst t0 m.
-                   intros Hin; apply Hallow; right; right.
-                   tauto.
-                ** subst t0.
-                   apply H0; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+                apply senv_rename_nin_disjoint; auto.
 
           -- (* Case 4: s in delta, symmetric to case 3 *)
              match type of Hallow with context[if ?p then _ else _] => destruct p end.
-             ++ rewrite filter_In in i.
-                rewrite negb_eqb_true_iff in i.
-                rewrite <- (cp_channels _ _ _ Hcp2) in i.
-                cbn in i.
-                assert (i' : In s (map fst delta)) by tauto.
-
-                (* s not in gamma *)
-                unfold senv_disjoint in H0.
-                assert (H0' : ~ In s (map fst gamma)).
-                { intros Hin; apply (H0 _ Hin i'). }
+             ++ rewrite Hcond1 in n1.
+                rewrite Hcond2 in i.
 
                 left; split.
                 1: right; rewrite map_app; rewrite in_app_iff; auto.
@@ -1979,52 +1814,29 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
                 2: apply Hcp1.
                 2: cbn; tauto.
                 specialize (IHHcp1 ltac:(auto)).
-                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1')].
-                1: cbn in IHHcp1; tauto.
+                cbn in IHHcp1.
+                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1')]; [tauto|].
                 rewrite IHHcp1'.
 
                 (* Simplify Hallow *)
-                cbn in Hallow.
+                rewrite Hcond1 in Hallow.
                 rewrite in_app_iff in Hallow.
-                rewrite filter_In in Hallow.
-                rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
-                rewrite negb_eqb_true_iff in Hallow.
-                cbn in Hallow.
 
                 (* Simplify IHHcp2 *)
                 specialize (IHHcp2 s t Hneq ltac:(tauto)).
-                destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)].
-                2: cbn in IHHcp2; tauto.
                 cbn in IHHcp2.
+                destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
                 replace (eqb x s) with false in IHHcp2 by (symmetry; rewrite eqb_neq; auto).
                 fold (senv_rename delta s t) in IHHcp2.
 
                 constructor; auto.
-
-                (* disjointness *)
-                unfold senv_disjoint.
-                intros m Hm.
-                unfold senv_rename; rewrite map_map.
-                rewrite in_map_iff.
-                intros Hin.
-                destruct Hin as (z & Hz1 & Hz2).
-                destruct z.
-                destruct (eqb_spec t0 s); cbn in Hz1.
-                ** subst t0 m.
-                   apply Hallow; right; split; auto.
-                   intros Heq; subst t.
-                   tauto.
-                ** subst m.
-                   apply (H0 t0); auto; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+                apply senv_disjoint_sym.
+                apply senv_rename_nin_disjoint; auto.
+                apply senv_disjoint_sym; auto.
 
              ++ (* Case 5: s not a channel *)
-                rewrite filter_In in n1, n2.
-                rewrite negb_eqb_true_iff in n1, n2.
-                rewrite <- (cp_channels _ _ _ Hcp1) in n1.
-                rewrite <- (cp_channels _ _ _ Hcp2) in n2.
-                cbn in n1, n2.
-                assert (n1' : ~ In s (map fst gamma)) by tauto.
-                assert (n2' : ~ In s (map fst delta)) by tauto.
+                rewrite Hcond1 in n1.
+                rewrite Hcond2 in n2.
 
                 right; split.
                 1: rewrite map_app, in_app_iff; tauto.
@@ -2038,20 +1850,21 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
                 2,3: cbn; tauto.
                 specialize (IHHcp1 ltac:(auto)).
                 specialize (IHHcp2 ltac:(auto)).
-                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)].
-                1: tauto.
-                destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)].
-                1: tauto.
+                cbn in IHHcp1, IHHcp2.
+                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)]; [tauto|].
+                destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)]; [tauto|].
 
                 rewrite IHHcp1, IHHcp2; auto.
 
     - (* Proc_OutChAndSplit *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
-      rewrite map_app, in_app_iff in Hcp1', Hcp2'.
+      assert (Hx1 : ~ In x (map fst gamma)) by (eauto with senv_valid).
+      assert (Hy : ~ In y (map fst gamma)) by (eauto with senv_valid).
+      assert (Hx2 : ~ In x (map fst delta2)) by (rewrite Permutation_middle in Hcp2; eauto with senv_valid).
+      assert (Hy2 : ~ In y (map fst delta1)) by (rewrite Permutation_middle in Hcp1; eauto with senv_valid).
+
+      pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -2068,17 +1881,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
         (* Simplify Hallow *)
         do 2 rewrite in_app_iff in Hallow.
-        rewrite filter_In in Hallow.
-        rewrite <- (proc_channels_perm _ _ Hcp1) in Hallow.
-        cbn in Hallow.
-        assert (Hallow' : ~ In t (map fst delta1)).
-        { intros Hin; apply Hallow.
-          right; left; split.
-          1: rewrite map_app, in_app_iff; auto.
-          destruct (in_dec eq_dec t (map fst gamma)).
-          1: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' t); tauto.
-          rewrite negb_eqb_true_iff; intros Heq; subst t; tauto.
-        }
+        rewrite Hcond1 in Hallow.
 
         specialize (IHHcp2 x t Hneq ltac:(tauto)).
         cbn in IHHcp2.
@@ -2098,32 +1901,11 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           rewrite str_list_repl_nin; [|tauto].
           destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          1: { rewrite <- (proc_channels_perm _ _ Hcp1) in i.
-               cbn in i.
-               rewrite eqb_refl in i; cbn in i.
-               destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-               rewrite map_app, filter_app in i.
-               rewrite forallb_filter_nil in i.
-               1: rewrite forallb_filter_id in i.
-               2,3: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-               2: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-               2: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-               cbn in i; tauto.
-          }
+          1: rewrite Hcond1 in i; tauto.
 
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
           -- (* Case 2.1: y in delta2 *)
-             rewrite <- (proc_channels_perm _ _ Hcp2) in i.
-             cbn in i.
-             rewrite eqb_refl in i; cbn in i.
-             destruct (in_dec eq_dec x (map fst gamma)); [tauto|].
-             rewrite map_app, filter_app in i.
-             rewrite forallb_filter_nil in i.
-             1: rewrite forallb_filter_id in i.
-             2,3: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-             2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-             2: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-             cbn in i.
+             rewrite Hcond2 in i.
 
              left; split.
              1: right; do 2 rewrite map_app, in_app_iff; auto.
@@ -2135,6 +1917,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              fold (senv_rename delta2 y t).
 
              do 2 rewrite in_app_iff in Hallow.
+             rewrite Hcond1 in Hallow.
+
              specialize (IHHcp2 y t Hneq ltac:(tauto)).
              cbn in IHHcp2.
              destruct (eqb_spec x y); [tauto|].
@@ -2148,49 +1932,13 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              rewrite <- app_assoc.
              constructor; auto.
 
-             (* disjointness *)
-             assert (Hallow' : ~ In t (map fst delta1)).
-             { intros Hin; apply Hallow.
-               right; left.
-               rewrite <- (proc_channels_perm _ _ Hcp1); cbn.
-               destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-               rewrite eqb_refl; cbn.
-               rewrite map_app, filter_app.
-               rewrite forallb_filter_nil.
-               1: rewrite forallb_filter_id.
-               2,3: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-               2: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-               2: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-               cbn; auto.
-             }
-
-             unfold senv_disjoint.
-             intros z Hz1 Hz2.
-             unfold senv_rename in Hz2.
-             rewrite map_map in Hz2.
-             rewrite in_map_iff in Hz2.
-             destruct Hz2 as (w & Hw1 & Hw2); subst z.
-             destruct w.
-             destruct (eqb_spec t0 y); try subst y; cbn in Hz1.
-             ++ contradiction.
-             ++ unfold senv_disjoint in H1; specialize (H1 t0).
-                apply (in_map fst) in Hw2; cbn in Hw2; tauto.
+             apply senv_disjoint_sym.
+             apply senv_rename_nin_disjoint; auto.
+             apply senv_disjoint_sym; auto.
 
           -- (* Case 2.2: y not in delta2 *)
-             rewrite <- (proc_channels_perm _ _ Hcp1) in n1.
-             rewrite <- (proc_channels_perm _ _ Hcp2) in n2.
-             cbn in n1, n2.
-             rewrite eqb_refl in n1, n2; cbn in n1, n2.
-             destruct (in_dec eq_dec x (map fst gamma)); [tauto|].
-             destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-             rewrite map_app, filter_app in n1, n2.
-             rewrite forallb_filter_nil in n1, n2.
-             1: rewrite forallb_filter_id in n1, n2.
-             2,3,4,5: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-             2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-             3: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-             2,3: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-             cbn in n1, n2.
+             rewrite Hcond1 in n1.
+             rewrite Hcond2 in n2.
 
              right; split.
              1: do 2 rewrite map_app, in_app_iff; tauto.
@@ -2228,90 +1976,37 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              fold (senv_rename delta1 s t).
              fold (senv_rename delta2 s t).
              rewrite <- senv_rename_repl.
+
              constructor; auto.
 
              ++ (* ques *)
-                unfold senv_rename; rewrite map_map.
-                rewrite Forall_forall; rewrite Forall_forall in H.
-                intros z Hz.
-                rewrite in_map_iff in Hz.
-                destruct Hz as (w & Hw1 & Hw2); subst z.
-                destruct w.
-                destruct (eqb t0 s); cbn;
-                apply (H s0 ltac:(rewrite in_map_iff; eexists; split; try apply Hw2; auto)).
+                rewrite senv_rename_snd; auto.
 
              ++ (* nodup *)
-                assert (Hallow' : x <> t).
-                { intros Heq; subst t.
-                  apply Hallow; right.
-                  eapply proc_forbidden_channel.
-                  1: apply Hcp2.
-                  3: auto.
-                  2: left; auto.
-                  cbn; right; rewrite map_app, in_app_iff; left; auto.
-                }
-
-                unfold senv_rename.
-                rewrite map_map.
-                rewrite in_map_iff; intros Hin.
-                destruct Hin as (z & Hz1 & Hz2); subst x.
-                destruct z.
-                destruct (eqb_spec t0 s); try subst s.
-                ** cbn in Hallow'; contradiction.
-                ** cbn in H0; apply H0; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+                apply senv_rename_nin_nin; auto.
+                intros Heq; subst t.
+                apply Hallow; right.
+                eapply proc_forbidden_channel.
+                1: apply Hcp2.
+                1,2: cbn; rewrite map_app, in_app_iff; tauto.
+                tauto.
 
              ++ (* disjointness *)
-                destruct Hcp1' as (_ & Hcp1').
-                destruct Hcp2' as (_ & Hcp2').
-                apply senv_app in Hcp1', Hcp2'.
-                destruct Hcp1' as (_ & _ & Hcp1').
-                destruct Hcp2' as (_ & _ & Hcp2').
-                specialize (Hcp1' s i).
-                specialize (Hcp2' s i).
-                do 2 (rewrite senv_rename_nin; auto).
+                rewrite (senv_rename_nin delta1); auto.
+                1: rewrite (senv_rename_nin delta2); auto.
+                1,2: eauto with senv_valid senv_disjoint.
 
           -- (* Case 4: s in delta1 *)
              match type of Hallow with context[if ?p then _ else _] => destruct p end.
-             ++ rewrite <- (proc_channels_perm _ _ Hcp1) in i.
-                cbn in i.
-                rewrite eqb_refl in i; cbn in i.
-                destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-                rewrite map_app, filter_app in i.
-                rewrite forallb_filter_nil in i.
-                1: rewrite forallb_filter_id in i.
-                2,3: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-                2: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-                2: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-                cbn in i.
-
-                assert (i' : ~ In s (map fst gamma)).
-                { intros Hin.
-                  destruct Hcp1' as (_ & Hcp1').
-                  apply senv_app in Hcp1'.
-                  destruct Hcp1' as (_ & _ & Hcp1').
-                  specialize (Hcp1' x); tauto.
-                }
-
-                assert (i'' : ~ In s (map fst delta2)).
-                { specialize (H1 s); tauto. }
+             ++ rewrite Hcond1 in i.
+                assert (i' : ~ In s (map fst delta2)) by eauto with senv_disjoint.
 
                 left; split.
                 1: right; do 2 rewrite map_app, in_app_iff; auto.
 
-                assert (Hallow' : ~ In t (map fst delta2)).
-                { intros Hin; apply Hallow.
-                  right; do 2 rewrite in_app_iff; right; left.
-                  rewrite <- (proc_channels_perm _ _ Hcp2); cbn.
-                  rewrite eqb_refl; cbn.
-                  destruct (in_dec eq_dec x (map fst gamma)); [tauto|].
-                  rewrite map_app, filter_app, in_app_iff; right.
-                  rewrite filter_In; split; auto.
-                  destruct (in_dec eq_dec t (map fst gamma)); auto.
-                  1: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' t); tauto.
-                  rewrite negb_eqb_true_iff; intros Heq; subst t; tauto.
-                }
-
+                rewrite Hcond2 in Hallow.
                 cbn in Hallow; do 2 rewrite in_app_iff in Hallow.
+
                 specialize (IHHcp1 s t Hneq ltac:(tauto)).
                 cbn in IHHcp1; rewrite map_app, in_app_iff in IHHcp1.
                 destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)]; [|tauto].
@@ -2335,73 +2030,23 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
                 fold (senv_rename delta2 s t); rewrite senv_rename_nin; auto.
                 fold (senv_rename delta1 s t).
                 rewrite str_list_repl_nin; auto.
+
                 constructor; auto.
-
-                ** unfold senv_rename.
-                   rewrite map_map.
-                   rewrite in_map_iff; intros Hin.
-                   destruct Hin as (z & Hz1 & Hz2); subst x.
-                   destruct z.
-                   destruct (eqb_spec t0 s); try subst s.
-                   --- cbn in Hallow; tauto.
-                   --- cbn in H0; apply H0; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-
-                ** unfold senv_disjoint.
-                   intros z Hz1 Hz2.
-                   unfold senv_rename in Hz1.
-                   rewrite map_map in Hz1.
-                   rewrite in_map_iff in Hz1.
-                   destruct Hz1 as (w & Hw1 & Hw2); subst z.
-                   destruct w.
-                   destruct (eqb_spec t0 s); try subst s.
-                   --- cbn in Hz2; contradiction.
-                   --- cbn in Hz2.
-                       specialize (H1 t0).
-                       apply (in_map fst) in Hw2; tauto.
+                ** apply senv_rename_nin_nin; auto.
+                ** apply senv_rename_nin_disjoint; tauto.
 
              ++ (* Case 5: s in delta2 *)
                 match type of Hallow with context[if ?p then _ else _] => destruct p end.
 
-                ** rewrite <- (proc_channels_perm _ _ Hcp2) in i.
-                   cbn in i.
-                   rewrite eqb_refl in i; cbn in i.
-                   destruct (in_dec eq_dec x (map fst gamma)); [tauto|].
-                   rewrite map_app, filter_app in i.
-                   rewrite forallb_filter_nil in i.
-                   1: rewrite forallb_filter_id in i.
-                   2,3: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-                   2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-                   2: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-                   cbn in i.
-
-                   assert (i' : ~ In s (map fst gamma)).
-                   { intros Hin.
-                     destruct Hcp1' as (_ & Hcp1').
-                     apply senv_app in Hcp1'.
-                     destruct Hcp1' as (_ & _ & Hcp1').
-                     specialize (Hcp1' x); tauto.
-                   }
-
-                   assert (i'' : ~ In s (map fst delta1)).
-                   { specialize (H1 s); tauto. }
+                ** rewrite Hcond1 in n2.
+                   rewrite Hcond2 in i.
 
                    left; split.
                    1: right; do 2 rewrite map_app, in_app_iff; auto.
 
-                   assert (Hallow' : ~ In t (map fst delta1)).
-                   { intros Hin; apply Hallow.
-                     do 2 rewrite in_app_iff; right; left.
-                     rewrite <- (proc_channels_perm _ _ Hcp1); cbn.
-                     rewrite eqb_refl; cbn.
-                     destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-                     rewrite map_app, filter_app, in_app_iff; right.
-                     rewrite filter_In; split; auto.
-                     destruct (in_dec eq_dec t (map fst gamma)); auto.
-                     1: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' t); tauto.
-                     rewrite negb_eqb_true_iff; intros Heq; subst t; tauto.
-                   }
-
+                   rewrite Hcond1 in Hallow.
                    do 2 rewrite in_app_iff in Hallow.
+
                    specialize (IHHcp2 s t Hneq ltac:(tauto)).
                    cbn in IHHcp2; rewrite map_app, in_app_iff in IHHcp2.
                    destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
@@ -2427,34 +2072,13 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
                    rewrite str_list_repl_nin; auto.
                    constructor; auto.
 
-                   unfold senv_disjoint.
-                   intros z Hz1 Hz2.
-                   unfold senv_rename in Hz2.
-                   rewrite map_map in Hz2.
-                   rewrite in_map_iff in Hz2.
-                   destruct Hz2 as (w & Hw1 & Hw2); subst z.
-                   destruct w.
-                   destruct (eqb_spec t0 s); try subst s.
-                   --- cbn in Hz1; contradiction.
-                   --- cbn in Hz1.
-                       specialize (H1 t0).
-                       apply (in_map fst) in Hw2; tauto.
+                   apply senv_disjoint_sym.
+                   apply senv_rename_nin_disjoint; auto.
+                   apply senv_disjoint_sym; auto.
 
                 ** (* Case 6: s not a channel *)
-                   rewrite <- (proc_channels_perm _ _ Hcp1) in n2.
-                   rewrite <- (proc_channels_perm _ _ Hcp2) in n3.
-                   cbn in n2, n3.
-                   rewrite eqb_refl in n2, n3; cbn in n2, n3.
-                   destruct (in_dec eq_dec x (map fst gamma)); [tauto|].
-                   destruct (in_dec eq_dec y (map fst gamma)); [tauto|].
-                   rewrite map_app, filter_app in n2, n3.
-                   rewrite forallb_filter_nil in n2, n3.
-                   1: rewrite forallb_filter_id in n2, n3.
-                   2,3,4,5: rewrite forallb_forall; intros z Hz; destruct (in_dec eq_dec z (map fst gamma)); auto.
-                   2: destruct Hcp2' as (_ & Hcp2'); apply senv_app in Hcp2'; destruct Hcp2' as (_ & _ & Hcp2'); specialize (Hcp2' z); tauto.
-                   3: destruct Hcp1' as (_ & Hcp1'); apply senv_app in Hcp1'; destruct Hcp1' as (_ & _ & Hcp1'); specialize (Hcp1' z); tauto.
-                   2,3: rewrite negb_eqb_true_iff; intros Heq; subst z; tauto.
-                   cbn in n2, n3.
+                   rewrite Hcond1 in n2.
+                   rewrite Hcond2 in n3.
 
                    right; split.
                    1: do 2 rewrite map_app, in_app_iff; tauto.
@@ -2476,18 +2100,15 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_InCh *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      repeat rewrite senv_valid_cons in Hcp'.
-      cbn in Hcp'.
+      assert (Hx1 : x <> y) by eauto with senv_valid.
+      assert (Hx2 : ~ In x (map fst gamma)) by (rewrite perm_swap in Hcp; eauto with senv_valid).
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
 
       (* Case 1: s = y *)
       destruct (eqb_spec y s).
       + subst s.
         clear Hallow.
-
-        right; split; auto.
-        clear IHHcp; firstorder.
+        right; split; tauto.
 
       + (* Case 2: s = x *)
         destruct (eqb_spec x s).
@@ -2497,9 +2118,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
           (* Simplify IHHcp *)
           specialize (IHHcp x t Hneq Hallow).
-          cbn [map fst] in IHHcp.
-          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
-          2: cbn in IHHcp; tauto.
+          cbn [map fst In] in IHHcp.
+          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
           cbn in IHHcp.
           rewrite eqb_refl in IHHcp.
           replace (eqb y x) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
@@ -2527,9 +2147,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_OutLeft *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (Hx : ~ In x (map fst gamma)) by eauto with senv_valid.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -2539,9 +2157,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
         (* Simplify IHHcp *)
         specialize (IHHcp x t Hneq Hallow).
-        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
-        2: cbn in IHHcp; tauto.
         cbn in IHHcp.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
         rewrite eqb_refl in IHHcp.
         fold (senv_rename gamma x t) in IHHcp.
 
@@ -2569,9 +2186,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_OutRight *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (Hx : ~ In x (map fst gamma)) by eauto with senv_valid.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -2581,9 +2196,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
         (* Simplify IHHcp *)
         specialize (IHHcp x t Hneq Hallow).
-        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
-        2: cbn in IHHcp; tauto.
         cbn in IHHcp.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
         rewrite eqb_refl in IHHcp.
         fold (senv_rename gamma x t) in IHHcp.
 
@@ -2611,10 +2225,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_InCase *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
+      assert (Hx : ~ In x (map fst gamma)) by eauto with senv_valid.
 
       (* Simplify Hallow *)
       rewrite in_app_iff in Hallow.
@@ -2679,48 +2290,18 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_Server *)
       cbn; intros s t Hneq Hallow.
-      rewrite Forall_forall in H.
-
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp) as Hcond.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s.
         left; split; auto.
         fold (senv_rename gamma x t).
+        rewrite Hcond in Hallow.
+        rewrite senv_rename_nin; auto.
 
-        (* Simplify Hallow *)
-        rewrite filter_In in Hallow.
-        rewrite negb_eqb_true_iff in Hallow.
-        rewrite <- (cp_channels _ _ _ Hcp) in Hallow.
-        cbn in Hallow.
-        assert (Hallow' : ~ In t (map fst gamma)) by (revert Hallow; apply list_nin_helper; tauto).
-
-        constructor.
-        * (* ques *)
-          rewrite Forall_forall.
-          intros z Hz.
-          unfold senv_rename in Hz.
-          rewrite map_map in Hz.
-          rewrite in_map_iff in Hz.
-          destruct Hz as (w & Hw1 & Hw2).
-          destruct w; cbn in Hw1; subst z.
-          specialize (H s ltac:(rewrite in_map_iff; eexists; split; try apply Hw2; auto)).
-          destruct (eqb t0 x); cbn; auto.
-
-        * (* nodup *)
-          unfold senv_rename.
-          rewrite map_map.
-          rewrite in_map_iff.
-          intros Hin.
-          destruct Hin as (z & Hz1 & Hz2).
-          destruct z.
-          destruct (eqb_spec t0 x); cbn in Hz1; subst t0; try subst t.
-          1: apply H0. 2: apply Hallow'. all: rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-
-        * rewrite senv_rename_nin; auto.
+        constructor; auto.
 
       + (* Case 2: s = y *)
         destruct (eqb_spec y s).
@@ -2729,13 +2310,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
         * (* Case 3: s in gamma *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          -- (* Simplify i *)
-             rewrite filter_In in i.
-             rewrite negb_eqb_true_iff in i.
-             rewrite <- (cp_channels _ _ _ Hcp) in i.
-             cbn in i.
-             destruct i as ([? | i] & _); [contradiction|].
-
+          -- rewrite Hcond in i.
              cbn in Hallow.
 
              (* Simplify IHHcp *)
@@ -2749,35 +2324,13 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              fold (senv_rename gamma s t).
              constructor; auto.
              ++ (* ques *)
-                rewrite Forall_forall.
-                intros z Hz.
-                unfold senv_rename in Hz.
-                rewrite map_map in Hz.
-                rewrite in_map_iff in Hz.
-                destruct Hz as (w & Hw1 & Hw2).
-                destruct w.
-                specialize (H s0 ltac:(rewrite in_map_iff; eexists; split; try apply Hw2; auto)).
-                destruct (eqb t0 s); cbn in Hw1; subst z; auto.
+                rewrite senv_rename_snd; auto.
 
              ++ (* nodup *)
-                unfold senv_rename.
-                rewrite map_map.
-                rewrite in_map_iff.
-                intros Hin.
-                destruct Hin as (z & Hz1 & Hz2).
-                destruct z.
-                destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
-                1: tauto.
-                apply H0; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+                apply senv_rename_nin_nin; auto.
 
           -- (* Case 4: s not a channel *)
-             (* Simplify n1 *)
-             rewrite filter_In in n1.
-             rewrite negb_eqb_true_iff in n1.
-             rewrite <- (cp_channels _ _ _ Hcp) in n1.
-             cbn in n1.
-             assert (n1' : ~ In s (map fst gamma)) by tauto.
-
+             rewrite Hcond in n1.
              right; split; [tauto|].
 
              (* Simplify IHHcp *)
@@ -2786,43 +2339,25 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              2: apply Hcp.
              2: cbn; tauto.
              specialize (IHHcp ltac:(auto)).
-             destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)].
-             1: cbn in IHHcp; tauto.
+             cbn in IHHcp.
+             destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)]; [tauto|].
 
              rewrite IHHcp; auto.
 
     - (* Proc_Client *)
       cbn; intros s t Hneq Hallow.
-
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (Hy : ~ In y (map fst gamma)) by eauto with senv_valid.
+      pose proof (proc_channels_filter_one _ _ _ _ Hcp) as Hcond.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s.
         left; split; auto.
         fold (senv_rename gamma x t).
+        rewrite Hcond in Hallow.
+        rewrite senv_rename_nin; auto.
 
-        (* Simplify Hallow *)
-        rewrite filter_In in Hallow.
-        rewrite negb_eqb_true_iff in Hallow.
-        rewrite <- (cp_channels _ _ _ Hcp) in Hallow.
-        cbn in Hallow.
-        assert (Hallow' : ~ In t (map fst gamma)) by (revert Hallow; apply list_nin_helper; tauto).
-
-        constructor.
-        * (* nodup *)
-          unfold senv_rename.
-          rewrite map_map.
-          rewrite in_map_iff.
-          intros Hin.
-          destruct Hin as (z & Hz1 & Hz2).
-          destruct z.
-          destruct (eqb_spec t0 x); cbn in Hz1; subst t0; try subst t.
-          1: apply H. 2: apply Hallow'. all: rewrite in_map_iff; eexists; split; try apply Hz2; auto.
-
-        * rewrite senv_rename_nin; auto.
+        constructor; auto.
 
       + (* Case 2: s = y *)
         destruct (eqb_spec y s).
@@ -2831,13 +2366,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
         * (* Case 3: s in gamma *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          -- (* Simplify i *)
-             rewrite filter_In in i.
-             rewrite negb_eqb_true_iff in i.
-             rewrite <- (cp_channels _ _ _ Hcp) in i.
-             cbn in i.
-             destruct i as ([? | i] & _); [contradiction|].
-
+          -- rewrite Hcond in i.
              cbn in Hallow.
 
              (* Simplify IHHcp *)
@@ -2850,25 +2379,10 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              left; split; auto.
              fold (senv_rename gamma s t).
              constructor; auto.
-             ++ (* nodup *)
-                unfold senv_rename.
-                rewrite map_map.
-                rewrite in_map_iff.
-                intros Hin.
-                destruct Hin as (z & Hz1 & Hz2).
-                destruct z.
-                destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
-                1: tauto.
-                apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+             apply senv_rename_nin_nin; auto.
 
           -- (* Case 4: s not a channel *)
-             (* Simplify n1 *)
-             rewrite filter_In in n1.
-             rewrite negb_eqb_true_iff in n1.
-             rewrite <- (cp_channels _ _ _ Hcp) in n1.
-             cbn in n1.
-             assert (n1' : ~ In s (map fst gamma)) by tauto.
-
+             rewrite Hcond in n1.
              right; split; [tauto|].
 
              (* Simplify IHHcp *)
@@ -2877,8 +2391,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              2: apply Hcp.
              2: cbn; tauto.
              specialize (IHHcp ltac:(auto)).
-             destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)].
-             1: cbn in IHHcp; tauto.
+             cbn in IHHcp.
+             destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)]; [tauto|].
 
              rewrite IHHcp; auto.
 
@@ -2895,7 +2409,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         erewrite proc_forbidden_empty in IHHcp.
         2: apply Hcp.
         2: auto.
-        rewrite <- (cp_channels _ _ _ Hcp) in Hallow.
+        rewrite <- (proc_channels_perm _ _ Hcp) in Hallow.
         specialize (IHHcp ltac:(auto)).
         destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)]; [tauto|].
 
@@ -2905,7 +2419,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
       + (* Case 2: s in gamma *)
         match type of Hallow with context[if ?p then _ else _] => destruct p end.
-        * rewrite <- (cp_channels _ _ _ Hcp) in i.
+        * rewrite <- (proc_channels_perm _ _ Hcp) in i.
           left; split; auto.
 
           (* Simplify IHHcp *)
@@ -2914,20 +2428,11 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
           fold (senv_rename gamma s t).
           constructor; auto.
-          -- (* nodup *)
-             unfold senv_rename.
-             rewrite map_map.
-             rewrite in_map_iff.
-             intros Hin.
-             destruct Hin as (z & Hz1 & Hz2).
-             destruct z.
-             destruct (eqb_spec t0 s); cbn in Hz1; subst x.
-             ++ subst t0.
-                cbn in Hallow; tauto.
-             ++ apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+          apply senv_rename_nin_nin; auto.
+          cbn in Hallow; tauto.
 
         * (* Case 3: s not a channel *)
-          rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          rewrite <- (proc_channels_perm _ _ Hcp) in n0.
           right; split; [tauto|].
 
           (* Simplify IHHcp *)
@@ -2942,15 +2447,14 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_ClientSplit *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      repeat rewrite senv_valid_cons in Hcp'.
-      cbn in Hcp'.
+      assert (Hx1 : x <> y) by eauto with senv_valid.
+      assert (Hx2 : ~ In x (map fst gamma)) by (rewrite perm_swap in Hcp; eauto with senv_valid).
+      assert (Hx3 : ~ In y (map fst gamma)) by eauto with senv_valid.
 
       (* Case 1: s = y *)
       destruct (eqb_spec y s).
       + subst s.
-        right; split; [firstorder | auto].
+        right; split; tauto.
 
       + (* Case 2: s = x *)
         destruct (eqb_spec x s).
@@ -2962,8 +2466,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           cbn in IHHcp.
           rewrite eqb_refl in IHHcp.
           replace (eqb y x) with false in IHHcp by (symmetry; rewrite eqb_neq; tauto).
-          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
-          2: tauto.
+          destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
           fold (senv_rename gamma x t).
           fold (senv_rename gamma x t) in IHHcp.
           rewrite senv_rename_nin in *; try tauto.
@@ -2988,14 +2491,14 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_CompAndSplit *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp1 as Hcp1'.
-      apply cp_senv_valid in Hcp2 as Hcp2'.
-      rewrite senv_valid_cons in Hcp1', Hcp2'.
-      rewrite map_app, in_app_iff in Hcp1', Hcp2'.
-      destruct Hcp1' as (Hcp1' & Hcp3).
-      destruct Hcp2' as (Hcp2' & Hcp4).
-      apply senv_app in Hcp3, Hcp4.
+      assert (Hx1 : ~ In x (map fst gamma)) by eauto with senv_valid.
+
+      rewrite Permutation_middle in Hcp1, Hcp2.
+      assert (Hx2 : ~ In x (map fst delta1)) by eauto with senv_valid.
+      assert (Hx3 : ~ In x (map fst delta2)) by eauto with senv_valid.
+
+      pose proof (proc_channels_filter_app _ _ _ Hcp1) as Hcond1.
+      pose proof (proc_channels_filter_app _ _ _ Hcp2) as Hcond2.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -3009,10 +2512,10 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           specialize (IHHcp1 s t Hneq ltac:(tauto)).
           specialize (IHHcp2 s t Hneq ltac:(tauto)).
           cbn in IHHcp1, IHHcp2.
-          destruct (eqb_spec x s); try contradiction.
+          destruct (eqb_spec x s); [tauto|].
           rewrite map_app, in_app_iff in IHHcp1, IHHcp2.
-          destruct IHHcp1 as [(_ & IHHcp1) | ?]; [|tauto].
-          destruct IHHcp2 as [(_ & IHHcp2) | ?]; [|tauto].
+          destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)]; [|tauto].
+          destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
           fold (senv_rename (gamma ++ delta1) s t) in IHHcp1.
           fold (senv_rename (gamma ++ delta2) s t) in IHHcp2.
 
@@ -3022,55 +2525,38 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           rewrite senv_rename_app in IHHcp1, IHHcp2.
           rewrite <- senv_rename_repl.
           constructor; auto.
-          -- unfold senv_rename; rewrite map_map; cbn.
-             rewrite Forall_forall.
-             rewrite Forall_forall in H.
-             intros z Hz.
-             rewrite in_map_iff in Hz.
-             destruct Hz as (m & Hm1 & Hm2); subst z.
-             specialize (H _ ltac:(rewrite in_map_iff; eexists; split; try apply Hm2; auto)).
-             destruct m; destruct (eqb t0 s); cbn; auto.
+          -- rewrite senv_rename_snd; auto.
 
-          -- assert (Hcp5 : senv_disjoint gamma delta1) by tauto.
-             assert (Hcp6 : senv_disjoint gamma delta2) by tauto.
-             unfold senv_disjoint in Hcp5, Hcp6.
-             specialize (Hcp5 _ i); specialize (Hcp6 _ i).
+          -- rewrite <- Permutation_middle in Hcp1, Hcp2.
+             assert (~ In s (map fst delta1)) by eauto with senv_valid senv_disjoint.
+             assert (~ In s (map fst delta2)) by eauto with senv_valid senv_disjoint.
              do 2 (rewrite senv_rename_nin; auto).
 
         * (* Case 3: s in delta1 *)
           match type of Hallow with context[if ?p then _ else _] => destruct p end.
-          -- rewrite in_app_iff in Hallow.
-             rewrite filter_In in Hallow.
-             rewrite negb_in_dec_true_iff in Hallow.
-             rewrite <- (cp_channels _ _ _ Hcp2) in Hallow.
-             cbn in Hallow.
-             rewrite map_app, in_app_iff in Hallow.
-
-             rewrite filter_In in i.
-             rewrite negb_in_dec_true_iff in i.
-             rewrite <- (cp_channels _ _ _ Hcp1) in i.
-             cbn in i.
-             rewrite map_app, in_app_iff in i.
-             assert (i' : In s (map fst delta1)) by tauto.
+          -- rewrite Hcond1 in i; cbn in i.
+             destruct i as [i | i]; [tauto|].
+             rewrite Hcond2 in Hallow.
+             rewrite in_app_iff in Hallow; cbn in Hallow.
 
              specialize (IHHcp1 s t Hneq ltac:(tauto)).
              cbn in IHHcp1.
-             destruct (eqb_spec x s); try contradiction.
+             destruct (eqb_spec x s); [tauto|].
              rewrite map_app, in_app_iff in IHHcp1.
-             destruct IHHcp1 as [(_ & IHHcp1) | ?]; [|tauto].
+             destruct IHHcp1 as [(_ & IHHcp1) | (IHHcp1 & _)]; [|tauto].
              fold (senv_rename (gamma ++ delta1) s t) in IHHcp1.
 
              unfold senv_disjoint in H0.
-             assert (~ In s (map fst delta2)) by (clear IHHcp2; firstorder).
+             assert (~ In s (map fst delta2)) by eauto with senv_disjoint.
              specialize (IHHcp2 s t Hneq).
              erewrite proc_forbidden_empty in IHHcp2.
              2: apply Hcp2.
-             2: cbn; rewrite map_app, in_app_iff; tauto.
+             2: rewrite map_app, in_app_iff; cbn; tauto.
              specialize (IHHcp2 ltac:(auto)).
              cbn in IHHcp2.
-             destruct (eqb_spec x s); try contradiction.
+             destruct (eqb_spec x s); [tauto|].
              rewrite map_app, in_app_iff in IHHcp2.
-             destruct IHHcp2 as [? | (_ & IHHcp2)]; [tauto|].
+             destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)]; [tauto|].
 
              left; split.
              1: do 2 rewrite map_app, in_app_iff; auto.
@@ -3079,58 +2565,38 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
              rewrite (senv_rename_nin gamma s t) in IHHcp1; auto.
              rewrite <- senv_rename_repl.
              rewrite senv_rename_nin; auto.
-             rewrite (senv_rename_nin delta2 s t).
-             2: auto.
+             rewrite (senv_rename_nin delta2 s t); auto.
              rewrite IHHcp2.
 
              constructor; auto.
-             unfold senv_disjoint.
-             intros m Hm.
-             rewrite in_map_iff in Hm.
-             destruct Hm as (z & Hz1 & Hz2); subst m.
-             unfold senv_rename in Hz2.
-             rewrite in_map_iff in Hz2.
-             destruct Hz2 as (m & Hm1 & Hm2); subst z.
-             destruct m; destruct (eqb_spec t0 s); cbn; try subst.
-             2: apply H0; rewrite in_map_iff; eexists; split; try apply Hm2; auto.
-             intros Hin; apply Hallow; right.
-             split; auto.
-             unfold senv_disjoint in Hcp4; clear H0; firstorder.
+             2: rewrite <- Permutation_middle in Hcp2; auto.
+             apply senv_rename_nin_disjoint; auto.
 
           -- (* Case 4: s in delta 2 *)
              match type of Hallow with context[if ?p then _ else _] => destruct p end.
-             ++ rewrite in_app_iff in Hallow.
-                rewrite filter_In in Hallow.
-                rewrite negb_in_dec_true_iff in Hallow.
-                rewrite <- (cp_channels _ _ _ Hcp1) in Hallow.
-                cbn in Hallow.
-                rewrite map_app, in_app_iff in Hallow.
-
-                rewrite filter_In in i.
-                rewrite negb_in_dec_true_iff in i.
-                rewrite <- (cp_channels _ _ _ Hcp2) in i.
-                cbn in i.
-                rewrite map_app, in_app_iff in i.
-                assert (i' : In s (map fst delta2)) by tauto.
+             ++ rewrite Hcond2 in i; cbn in i.
+                destruct i as [i | i]; [tauto|].
+                rewrite Hcond1 in Hallow.
+                rewrite in_app_iff in Hallow; cbn in Hallow.
 
                 specialize (IHHcp2 s t Hneq ltac:(tauto)).
                 cbn in IHHcp2.
                 destruct (eqb_spec x s); try contradiction.
                 rewrite map_app, in_app_iff in IHHcp2.
-                destruct IHHcp2 as [(_ & IHHcp2) | ?]; [|tauto].
+                destruct IHHcp2 as [(_ & IHHcp2) | (IHHcp2 & _)]; [|tauto].
                 fold (senv_rename (gamma ++ delta2) s t) in IHHcp2.
 
                 unfold senv_disjoint in H0.
-                assert (~ In s (map fst delta1)) by (clear IHHcp1; firstorder).
+                assert (~ In s (map fst delta1)) by eauto with senv_disjoint.
                 specialize (IHHcp1 s t Hneq).
                 erewrite proc_forbidden_empty in IHHcp1.
                 2: apply Hcp1.
-                2: cbn; rewrite map_app, in_app_iff; tauto.
+                2: rewrite map_app, in_app_iff; cbn; tauto.
                 specialize (IHHcp1 ltac:(auto)).
                 cbn in IHHcp1.
-                destruct (eqb_spec x s); try contradiction.
+                destruct (eqb_spec x s); [tauto|].
                 rewrite map_app, in_app_iff in IHHcp1.
-                destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
+                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)]; [tauto|].
 
                 left; split.
                 1: do 2 rewrite map_app, in_app_iff; auto.
@@ -3139,32 +2605,19 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
                 rewrite (senv_rename_nin gamma s t) in IHHcp2; auto.
                 rewrite <- senv_rename_repl.
                 rewrite senv_rename_nin; auto.
-                rewrite (senv_rename_nin delta1 s t).
-                2: auto.
+                rewrite (senv_rename_nin delta1 s t); auto.
                 rewrite IHHcp1.
 
                 constructor; auto.
-                unfold senv_disjoint.
-                intros m Hm.
-                rewrite in_map_iff.
-                intros Hin.
-                destruct Hin as (z & Hz1 & Hz2); subst m.
-                unfold senv_rename in Hz2.
-                rewrite in_map_iff in Hz2.
-                destruct Hz2 as (m & Hm1 & Hm2); subst z.
-                destruct m; destruct (eqb_spec t0 s); cbn; try subst.
-                2: cbn in Hm; apply (H0 _ Hm ltac:(rewrite in_map_iff; eexists; split; try apply Hm2; auto)).
-                apply Hallow; left; split; auto.
-                cbn in Hm.
-                unfold senv_disjoint in Hcp3; clear H0; firstorder.
+                2: rewrite <- Permutation_middle in Hcp1; auto.
+                apply senv_disjoint_sym.
+                apply senv_rename_nin_disjoint; auto.
+                apply senv_disjoint_sym; auto.
 
              ++ (* Case 5: s not a channel *)
-                rewrite filter_In in n1, n2.
-                rewrite negb_in_dec_true_iff in n1, n2.
-                rewrite <- (cp_channels _ _ _ Hcp1) in n1.
-                rewrite <- (cp_channels _ _ _ Hcp2) in n2.
+                rewrite Hcond1 in n1.
+                rewrite Hcond2 in n2.
                 cbn in n1, n2.
-                rewrite map_app, in_app_iff in n1, n2.
 
                 specialize (IHHcp1 s t Hneq).
                 specialize (IHHcp2 s t Hneq).
@@ -3176,8 +2629,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
                 specialize (IHHcp2 ltac:(auto)).
                 cbn in IHHcp1, IHHcp2.
                 rewrite map_app, in_app_iff in IHHcp1, IHHcp2.
-                destruct IHHcp1 as [? | (_ & IHHcp1)]; [tauto|].
-                destruct IHHcp2 as [? | (_ & IHHcp2)]; [tauto|].
+                destruct IHHcp1 as [(IHHcp1 & _) | (_ & IHHcp1)]; [tauto|].
+                destruct IHHcp2 as [(IHHcp2 & _) | (_ & IHHcp2)]; [tauto|].
 
                 do 2 rewrite map_app, in_app_iff.
                 rewrite IHHcp1, IHHcp2.
@@ -3186,20 +2639,16 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_OutTyp *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (~ In x (map fst gamma)) by eauto with senv_valid.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s.
         left; split; auto.
 
-        (* Specialize (IHHcp *)
         specialize (IHHcp x t Hneq Hallow).
         cbn in IHHcp.
-        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
-        2: tauto.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
         rewrite eqb_refl in IHHcp.
         constructor; auto.
 
@@ -3215,9 +2664,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* Proc_InTyp *)
       cbn; intros s t Hneq Hallow.
-      (* senv_valid *)
-      apply cp_senv_valid in Hcp as Hcp'.
-      rewrite senv_valid_cons in Hcp'.
+      assert (~ In x (map fst gamma)) by eauto with senv_valid.
 
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
@@ -3227,8 +2674,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         (* Specialize (IHHcp *)
         specialize (IHHcp x t Hneq Hallow).
         cbn in IHHcp.
-        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)].
-        2: tauto.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
         rewrite eqb_refl in IHHcp.
         constructor; auto.
         * fold (senv_rename gamma x t).
@@ -3265,30 +2711,24 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         fold (senv_rename gamma x t).
         rewrite senv_rename_nin; auto.
         constructor; auto.
-        rewrite <- (cp_channels _ _ _ Hcp) in Hallow; auto.
+        rewrite <- (proc_channels_perm _ _ Hcp) in Hallow; auto.
 
       + (* Case 2: s in gamma *)
         match type of Hallow with context[if ?p then _ else _] => destruct p end.
-        * rewrite <- (cp_channels _ _ _ Hcp) in i.
-          left; split; auto.
+        * rewrite <- (proc_channels_perm _ _ Hcp) in i.
           cbn in Hallow.
+          fold (senv_rename gamma s t).
+          left; split; auto.
 
           (* Simplify IHHcp *)
           specialize (IHHcp s t Hneq ltac:(auto)).
           destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
 
           constructor; auto.
-          rewrite map_map.
-          rewrite in_map_iff.
-          intros Hin.
-          destruct Hin as (z & Hz1 & Hz2).
-          destruct z.
-          destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
-          1: tauto.
-          apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+          apply senv_rename_nin_nin; auto.
 
         * (* Case 3: s not a channel *)
-          rewrite <- (cp_channels _ _ _ Hcp) in n0.
+          rewrite <- (proc_channels_perm _ _ Hcp) in n0.
           right; split; [tauto|].
 
           (* Simplify IHHcp *)
@@ -3297,8 +2737,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           2: apply Hcp.
           2: auto.
           specialize (IHHcp ltac:(auto)).
-          destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)].
-          1: contradiction.
+          destruct IHHcp as [(IHHcp & _) | (_ & IHHcp)]; [tauto|].
           rewrite IHHcp; auto.
 
     - (* Proc_EmptyCase *)
@@ -3307,8 +2746,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       (* Case 1: s = x *)
       destruct (eqb_spec x s).
       + subst s.
-        left; split; auto.
-        cbn.
+        left; split; auto; cbn.
         rewrite eqb_refl.
         fold (senv_rename gamma x t).
         rewrite senv_rename_nin; auto.
@@ -3336,15 +2774,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
           constructor.
           -- (* nodup *)
-             unfold senv_rename.
-             rewrite map_map.
-             rewrite in_map_iff.
-             intros Hin.
-             destruct Hin as (z & Hz1 & Hz2).
-             destruct z.
-             destruct (eqb_spec t0 s); cbn in Hz1; subst x; try subst t0.
-             1: tauto.
-             apply H; rewrite in_map_iff; eexists; split; try apply Hz2; auto.
+             apply senv_rename_nin_nin; auto.
 
           -- (* senv_valid *)
              apply senv_rename_nin_valid; auto.
@@ -3438,8 +2868,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       Unshelve.
       4: exact id.
       4: exact (fun r => styp_subst v r e).
-      2: intros z; destruct z; cbn; auto.
-      2: intros z; destruct z; cbn; auto.
+      2,3: intros z; destruct z; cbn; auto.
       rewrite map_id.
       constructor; auto.
       rewrite length_map; auto.
@@ -3471,7 +2900,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       cbn in IHHcp2.
       rewrite Forall_cons_iff in IHHcp2.
       unfold styp_forbidden in IHHcp2.
-      rewrite <- styp_forbidden_dual in IHHcp2.
+      rewrite styp_forbidden_dual in IHHcp2.
       specialize (IHHcp2 ltac:(split; auto) ltac:(auto)).
 
       rewrite map_app.
@@ -3733,7 +3162,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       rewrite Forall_cons_iff in IHHcp1, IHHcp2.
       rewrite map_app, Forall_app in IHHcp1, IHHcp2.
       specialize (IHHcp1 ltac:(repeat split; auto) ltac:(auto)).
-      unfold styp_forbidden in IHHcp2; rewrite <- styp_forbidden_dual in IHHcp2.
+      unfold styp_forbidden in IHHcp2; rewrite styp_forbidden_dual in IHHcp2.
       specialize (IHHcp2 ltac:(repeat split; auto) ltac:(auto)).
       rewrite map_app in IHHcp1, IHHcp2.
 
@@ -3801,7 +3230,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         { rewrite Forall_forall; intros z Hz.
           rewrite Forall_forall in Hpre1_1, Hpre2_1, Hpre2_2.
           specialize (Hpre1_1 _ Hz); specialize (Hpre2_1 _ Hz); specialize (Hpre2_2 _ Hz).
-          pose proof (styp_forbidden_incl b v [] [v0] ltac:(apply incl_nil_l)).
+          rewrite styp_forbidden'_prop in Hpre1_1.
           apply styp_subst_forbidden; auto.
         }
         specialize (IHHcp ltac:(split; auto) ltac:(auto)).
@@ -3819,8 +3248,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           -- assert (Hnin : ~ In v0 (fvar e)).
              { intros Hin; rewrite Forall_forall in Hpre1_1.
                apply Hpre1_1 in Hin.
-               pose proof (styp_forbidden_bound b v v0 [v0] ltac:(auto) ltac:(left; auto)).
-               auto.
+               rewrite styp_forbidden'_prop in Hin; cbn in Hin; tauto.
              }
              unfold styp_forbidden; rewrite styp_forbidden_subst_no_free; auto.
              rewrite Forall_forall; intros z Hz.
@@ -3870,8 +3298,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         match type of IHHcp with (?P /\ _) -> _ => assert (H0 : P) end.
         { rewrite Forall_forall; rewrite Forall_forall in Hpre1_1.
           intros z Hz; specialize (Hpre1_1 _ Hz).
-          pose proof (styp_forbidden_incl a v [] [v0] ltac:(apply incl_nil_l)) as Hincl.
-          intros Hin; apply Hincl in Hin; contradiction.
+          rewrite styp_forbidden'_prop in Hpre1_1.
+          tauto.
         }
         specialize (IHHcp ltac:(split; auto) ltac:(auto)).
 
@@ -3923,3 +3351,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   Qed.
 
 End Wadler_Proc.
+
+Module Wadler_Proc_M (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableType) (Import WT : Wadler_Types PropVarName) (Import WSE : Wadler_SEnv PropVarName ChannelName WT) (Import WPCS : Wadler_ProcConst_Sig PropVarName WT).
+Include Wadler_Proc PropVarName ChannelName WT WSE WPCS.
+End Wadler_Proc_M.
