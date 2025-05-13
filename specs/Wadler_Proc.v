@@ -383,9 +383,7 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
     intros z Hz; destruct z.
     destruct (eqb_spec t0 s); auto.
     subst t0.
-    exfalso; apply Hnin; rewrite in_map_iff; eexists; split.
-    2: apply Hz.
-    auto.
+    exfalso; apply Hnin; apply (in_map fst) in Hz; auto.
   Qed.
 
   Lemma senv_rename_app : forall senv senv' s t,
@@ -562,6 +560,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_CompAndSplit (x : chn) (a : STyp) (l : list chn) (p : Process) (q : Process)
   | Proc_OutTyp (x : chn) (a : STyp) (v : pvn) (t : STyp) (p : Process)
   | Proc_InTyp (x : chn) (v : pvn) (t : STyp) (p : Process)
+  | Proc_InTypRename (x : chn) (v : pvn) (v' : pvn) (p : Process)
   | Proc_OutUnit (x : chn)
   | Proc_InUnit (x : chn) (p : Process)
   | Proc_EmptyCase (x : chn) (l : list chn).
@@ -585,6 +584,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_CompAndSplit x a l p q => l ++ filter (fun s => negb (eqb x s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p ++ proc_channels q))
   | Proc_OutTyp x a _ _ p => proc_channels p
   | Proc_InTyp x v t p => proc_channels p
+  | Proc_InTypRename x v v' p => proc_channels p
   | Proc_OutUnit x => [x]
   | Proc_InUnit x p => x :: proc_channels p
   | Proc_EmptyCase x l => x :: l
@@ -628,6 +628,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       if eqb x s then [] else if in_dec eq_dec s l then (proc_forbidden p s) ++ (proc_forbidden q s) else if in_dec eq_dec s delta1 then (proc_forbidden p s) ++ delta2 else if in_dec eq_dec s delta2 then delta1 ++ (proc_forbidden q s) else []
   | Proc_OutTyp x a _ _ p => proc_forbidden p s
   | Proc_InTyp x v _ p => proc_forbidden p s
+  | Proc_InTypRename x v v' p => proc_forbidden p s
   | Proc_OutUnit x => []
   | Proc_InUnit x p =>
       let gamma := proc_channels p in
@@ -717,6 +718,12 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       Forall (fun r => ~ In v (fvar r)) (map snd gamma) ->
       cp p ((x, a) :: gamma) ->
       cp (Proc_InTyp x v a p) ((x, STyp_Forall v a) :: gamma)
+  | cp_forall_rename :
+    forall x v v' a p gamma,
+      ~ In v' (styp_forbidden a v) ->
+      ~ In v' (fvar a) ->
+      cp p ((x, STyp_Forall v a) :: gamma) ->
+      cp (Proc_InTypRename x v v' p) ((x, STyp_Forall v' (styp_subst v a (STyp_Var v'))) :: gamma)
   | cp_one : forall x, cp (Proc_OutUnit x) [(x, STyp_One)]
   | cp_bot :
     forall x p gamma,
@@ -1023,6 +1030,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     - (* Proc_OutTyp x a p *)
       cbn; apply IHHcp.
     - (* Proc_InTyp x v p *)
+      cbn; apply IHHcp.
+    - (* Proc_InTypRename x v v' p *)
       cbn; apply IHHcp.
     - (* Proc_OutUnit x *)
       cbn; auto.
@@ -1434,6 +1443,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       cbn; auto.
     - (* Proc_InTyp *)
       cbn; auto.
+    - (* Proc_InTypRename *)
+      cbn; auto.
 
     - (* Proc_OutUnit *)
       cbn; intros s t H1 H2.
@@ -1494,6 +1505,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_CompAndSplit x a l p q => if eqb x s then Proc_CompAndSplit x a l p q else Proc_CompAndSplit x a (str_list_repl l s t) (proc_rename p s t) (proc_rename q s t)
   | Proc_OutTyp x a v b p => if eqb x s then Proc_OutTyp t a v b (proc_rename p s t) else Proc_OutTyp x a v b (proc_rename p s t)
   | Proc_InTyp x v b p => if eqb x s then Proc_InTyp t v b (proc_rename p s t) else Proc_InTyp x v b (proc_rename p s t)
+  | Proc_InTypRename x v v' p => if eqb x s then Proc_InTypRename t v v' (proc_rename p s t) else Proc_InTypRename x v v' (proc_rename p s t)
   | Proc_OutUnit x => if eqb x s then Proc_OutUnit t else Proc_OutUnit x
   | Proc_InUnit x p => if eqb x s then Proc_InUnit t p else Proc_InUnit x (proc_rename p s t)
   | Proc_EmptyCase x l => if eqb x s then Proc_EmptyCase t l else Proc_EmptyCase x (str_list_repl l s t)
@@ -2694,6 +2706,30 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         -- right; split; auto.
            rewrite IHHcp2; auto.
 
+    - (* Proc_InTypRename *)
+      cbn; intros s t Hneq Hallow.
+      destruct (eqb_spec x s).
+      + subst s.
+        left; split; auto.
+        specialize (IHHcp x t Hneq Hallow).
+        cbn in IHHcp.
+        rewrite eqb_refl in IHHcp.
+        fold (senv_rename gamma x t) in IHHcp.
+        destruct IHHcp as [(_ & IHHcp) | (IHHcp & _)]; [|tauto].
+        fold (senv_rename gamma x t).
+        constructor; auto.
+
+      + specialize (IHHcp s t Hneq Hallow).
+        cbn in IHHcp.
+        destruct (eqb_spec x s); try tauto.
+        fold (senv_rename gamma s t) in IHHcp.
+        fold (senv_rename gamma s t).
+        destruct IHHcp as [(IHHcp1 & IHHcp2) | (IHHcp1 & IHHcp2)].
+        * left; split; auto.
+          constructor; auto.
+        * right; split; auto.
+          rewrite IHHcp2; auto.
+
     - (* Proc_OutUnit *)
       cbn; intros s t Hneq _.
       destruct (eqb_spec x s).
@@ -2819,6 +2855,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_CompAndSplit x a l p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
   | Proc_OutTyp x a w b p => ~ In v' (styp_forbidden b w) /\ ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v'
   | Proc_InTyp x w _ p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
+  | Proc_InTypRename x w w' p => w <> v' /\ proc_var_subst_pre p v v'
   | Proc_OutUnit x => True
   | Proc_InUnit x p => proc_var_subst_pre p v v'
   | Proc_EmptyCase x l => True
@@ -2845,6 +2882,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | Proc_CompAndSplit x a l p q => Proc_CompAndSplit x (styp_subst v a e) l (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_OutTyp x a w b p => Proc_OutTyp x (styp_subst v a e) w (if pvn_eqb w v then b else styp_subst v b e) (proc_var_subst p v e)
   | Proc_InTyp x w b p => Proc_InTyp x w (if pvn_eqb w v then b else styp_subst v b e) (if pvn_eqb w v then p else proc_var_subst p v e)
+  | Proc_InTypRename x w w' p => Proc_InTypRename x w w' (proc_var_subst p v e)
   | Proc_OutUnit x => Proc_OutUnit x
   | Proc_InUnit x p => Proc_InUnit x (proc_var_subst p v e)
   | Proc_EmptyCase x l => Proc_EmptyCase x l
@@ -3090,7 +3128,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       intros z Hz.
       rewrite in_map_iff in Hz.
       destruct Hz as (m & Hm1 & Hm2); subst z.
-      specialize (H _ ltac:(rewrite in_map_iff; eexists; split; try apply Hm2; auto)).
+      specialize (H (snd m) ltac:(apply in_map; auto)).
       destruct (snd m); try contradiction; cbn; auto.
 
     - (* Proc_Client *)
@@ -3177,7 +3215,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         rewrite in_map_iff in Hr.
         destruct Hr as (z & Hz1 & Hz2); subst r.
         rewrite Forall_forall in H.
-        specialize (H _ ltac:(rewrite in_map_iff; eexists; split; try apply Hz2; auto)).
+        specialize (H (snd z) ltac:(apply in_map; auto)).
         destruct (snd z); try contradiction; cbn; auto.
       + unfold senv_disjoint; intros m; do 2 rewrite map_map; cbn; auto.
 
@@ -3287,7 +3325,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         2: { intros t Hin.
              rewrite Forall_forall in H.
              destruct t; cbn.
-             specialize (H s ltac:(rewrite in_map_iff; eexists; split; try apply Hin; auto)).
+             specialize (H s ltac:(apply (in_map snd) in Hin; auto)).
              rewrite styp_subst_no_free_ident; auto.
         }
         rewrite map_id; constructor; auto.
@@ -3309,12 +3347,91 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         rewrite in_map_iff in Hr.
         destruct Hr as (z & Hz1 & Hz2); subst r.
         rewrite Forall_forall in H.
-        specialize (H (snd z) ltac:(rewrite in_map_iff; eexists; split; try apply Hz2; auto)).
+        specialize (H (snd z) ltac:(apply in_map; auto)).
         intros Hin.
         apply var_free_subst in Hin.
         destruct Hin as [(Hin & _) | Hin]; [contradiction|].
         rewrite Forall_forall in Hpre2_1.
         specialize (Hpre2_1 _ Hin); contradiction.
+
+    - (* STyp_Forall rename *)
+      cbn; intros Hpre1 Hpre2.
+      rename v0 into w.
+      rename v' into w'.
+
+      rewrite Forall_cons_iff in Hpre1.
+      destruct Hpre1 as (Hpre1_1 & Hpre1_2).
+      apply Forall_and_inv in Hpre2.
+      destruct Hpre2 as (Hpre2_1 & Hpre2_2).
+      cbn in IHHcp.
+      rewrite Forall_cons_iff in IHHcp.
+
+      (* If v equals w, then v is not a free variable in either Forall w a or Forall w' a *)
+      destruct (pvn_eqb_spec w v).
+      + subst v.
+        cbn in IHHcp; rewrite pvn_eqb_refl in IHHcp.
+        specialize (IHHcp ltac:(split; auto; rewrite Forall_forall; intros; tauto) ltac:(auto)).
+        destruct (pvn_eqb_spec w' w).
+        * subst w'.          
+          constructor; auto.
+        * assert (Hfree : ~ In w (fvar (styp_subst w a (STyp_Var w')))).
+          { intros Hin; apply var_free_subst in Hin; cbn in Hin; tauto. }
+          rewrite styp_subst_no_free_ident; auto.
+          constructor; auto.
+
+      + (* If v equals w', then v is also not a free variable in either Forall w a or Forall w' a *)
+        destruct (pvn_eqb_spec w' v).
+        * subst v.
+          unfold styp_forbidden in IHHcp at 1.
+          rewrite styp_forbidden_empty in IHHcp.
+          2: cbn; rewrite fvar'_prop, filter_In, neg_in_dec_true_iff; cbn; tauto.
+          specialize (IHHcp ltac:(split; auto; rewrite Forall_forall; intros; tauto) ltac:(auto)).
+          rewrite styp_subst_no_free_ident in IHHcp; auto.
+          constructor; auto.
+
+        * (* Otherwise, v' is forbidden before renaming if it is forbidden before renaming *)
+          match type of IHHcp with (?P /\ _ -> _) => assert (H1 : P) end.
+          { rewrite Forall_forall; rewrite Forall_forall in Hpre1_1, Hpre2_1.
+            intros z Hz; specialize (Hpre1_1 _ Hz); specialize (Hpre2_1 _ Hz).
+            cbn in Hpre1_1.
+            destruct (pvn_eqb_spec w' v); [tauto|].
+            rewrite styp_forbidden'_prop in Hpre1_1.
+            fold (styp_forbidden (styp_subst w a (STyp_Var w')) v) in Hpre1_1.
+            rewrite var_rename_forbidden in Hpre1_1; auto.
+            cbn; destruct (pvn_eqb_spec w v); [tauto|]; rewrite styp_forbidden'_prop.
+            cbn; tauto.
+          }
+          specialize (IHHcp ltac:(split; auto) ltac:(auto)).
+
+          (* If v is not a free variable in a, then substitution has no effect *)
+          destruct (in_dec pvn_eq_dec v (fvar a)).
+          2: { assert (Hnin : ~ In v (fvar (styp_subst w a (STyp_Var w')))).
+               { intros Hin; apply var_free_subst in Hin.
+                 destruct Hin as [Hin | Hin]; [tauto|].
+                 cbn in Hin; tauto.
+               }
+               rewrite styp_subst_no_free_ident; auto.
+               rewrite styp_subst_no_free_ident in IHHcp; auto.
+               constructor; auto.
+          }
+
+          replace (styp_subst v (styp_subst w a (STyp_Var w')) e) with (styp_subst w (styp_subst v a e) (STyp_Var w')).
+          2: { symmetry; apply rename_subst_parallel; auto.
+               intros Hin; rewrite Forall_forall in Hpre2_1; specialize (Hpre2_1 _ Hin); tauto.
+          }
+          constructor; auto.
+          -- apply styp_subst_forbidden_2; auto.
+             intros Hin; rewrite Forall_forall in Hpre2_1; specialize (Hpre2_1 _ Hin); tauto.
+          -- intros Hin.
+             apply var_free_subst in Hin.
+             destruct Hin as [Hin | Hin]; [tauto|].
+             rewrite Forall_forall in Hpre1_1.
+             specialize (Hpre1_1 _ Hin).
+             cbn in Hpre1_1.
+             destruct (pvn_eqb_spec w' v); [tauto|].
+             rewrite styp_forbidden'_prop in Hpre1_1.
+             apply Hpre1_1; cbn; right; split; auto.
+             apply var_free_after_rename; auto.
 
     - (* STyp_One *)
       cbn; intros _ _; constructor.

@@ -410,6 +410,200 @@ Module Type Wadler_Types (PropVarName : UsualDecidableType).
     1,2: rewrite IHb; cbn; destruct (eqb_spec v0 v); try contradiction; auto.
   Qed.
 
+  (* If v' can be replaced by v'' in t, and t' does not contain variable v', then v' can be replaced by v'' in t{t'/v}.
+     Compared to the theorem above, this one relaxes the condition that v can be replaced by v'' in t.
+   *)
+  Lemma styp_subst_forbidden_2 (t : STyp) (v : pvn) (t' : STyp) (v' : pvn) (v'' : pvn) :
+  ~ In v'' (styp_forbidden t v') ->
+  ~ In v' (fvar t') ->
+  ~ In v'' (styp_forbidden (styp_subst v t t') v').
+  Proof.
+    induction t; cbn.
+    1,2: repeat match goal with |- context[eqb ?a ?b] => destruct (eqb a b); cbn end; try tauto.
+    1,2: intros _ Hnin; rewrite styp_forbidden_empty; auto.
+    1,2: rewrite styp_forbidden_dual; intros _ Hnin; rewrite styp_forbidden_empty; auto.
+    1,2: tauto.
+    1,2,3,4: repeat rewrite in_app_iff; intros Hnin1 Hnin2; specialize (IHt1 ltac:(tauto) ltac:(tauto)); specialize (IHt2 ltac:(tauto) ltac:(tauto)); tauto.
+    1,2: apply IHt.
+    3,4,5,6: tauto.
+    all: destruct (eqb_spec v0 v); cbn.
+    1,3: destruct (eqb v0 v'); tauto.
+    all: destruct (eqb v0 v'); [tauto|].
+    all: intros Hnin1 Hnin2; rewrite styp_forbidden'_prop in Hnin1; specialize (IHt ltac:(tauto) ltac:(tauto)).
+    all: rewrite styp_forbidden'_prop; intros Hin;
+         destruct Hin as [Hin | Hin]; [tauto|];
+         destruct Hin as (Hin1 & Hin2);
+         apply var_free_subst in Hin1;
+         tauto.
+  Qed.
+
+  (* The following lemmas are used for quantifier variable renaming *)
+
+  Lemma var_free_after_rename :
+  forall t v v' w,
+  In w (fvar t) ->
+  v <> w ->
+  In w (fvar (styp_subst v t (STyp_Var v'))).
+  Proof.
+    intros t v v' w.
+    induction t.
+    all: cbn.
+    1,2: destruct (eqb_spec x v); [subst v|]; cbn; tauto.
+    1,2: tauto.
+    1,2,3,4: repeat rewrite in_app_iff; intros Hpre1 Hpre2; destruct Hpre1 as [Hpre1 | Hpre1]; [specialize (IHt1 ltac:(tauto) ltac:(tauto)) | specialize (IHt2 ltac:(tauto) ltac:(tauto))]; tauto.
+    1,2: apply IHt.
+    3,4,5,6: tauto.
+    all: destruct (eqb v0 v); cbn; [tauto|].
+    all: rewrite fvar'_prop; rewrite (fvar'_prop _ [v0]); repeat rewrite filter_In, neg_in_dec_true_iff; cbn.
+    all: tauto.
+  Qed.
+
+  Lemma var_rename_forbidden :
+  forall t v v' w w',
+  ~ In v' (fvar t) ->
+  ~ In v' (styp_forbidden t v) ->
+  w <> v ->
+  w <> v' ->
+  In w' (styp_forbidden (styp_subst v t (STyp_Var v')) w) <-> In w' (styp_forbidden t w).
+  Proof.
+    intros t v v' w.
+    induction t.
+    all: cbn.
+    1,2: repeat match goal with |- context[eqb ?a ?b] => destruct (eqb a b); cbn end; tauto.
+    1,2: tauto.
+    1,2,3,4: intros w'; repeat rewrite in_app_iff; intros Hpre1 Hpre2 Hpre3 Hpre4;
+             specialize (IHt1 w' ltac:(tauto) ltac:(tauto) ltac:(tauto) ltac:(tauto));
+             specialize (IHt2 w' ltac:(tauto) ltac:(tauto) ltac:(tauto) ltac:(tauto));
+             unfold styp_forbidden in IHt1, IHt2; rewrite IHt1, IHt2; tauto.
+    1,2: apply IHt.
+    3,4,5,6: tauto.
+    all: destruct (eqb_spec v0 v); cbn; [tauto|].
+    all: intros w'; rewrite fvar'_prop, styp_forbidden'_prop, filter_In, neg_in_dec_true_iff; cbn.
+    all: destruct (in_dec eq_dec v (fvar t)).
+    2,4: rewrite styp_subst_no_free_ident; auto; destruct (eqb v0 w); tauto.
+    all: intros Hpre1 Hpre2 Hpre3 Hpre4;
+         specialize (IHt w' ltac:(tauto) ltac:(tauto) ltac:(tauto) ltac:(tauto));
+         destruct (eqb_spec v0 w); [tauto|];
+         rewrite styp_forbidden'_prop;
+         rewrite (styp_forbidden'_prop t w); cbn;
+         unfold styp_forbidden in IHt; rewrite IHt; split.
+    2,4: intros Hpre;
+         destruct Hpre as [Hpre | Hpre]; [auto|];
+         destruct Hpre as (Hpre & Hpre'); right; split; auto;
+         apply (var_free_after_rename t v v' w Hpre ltac:(intros Heq; symmetry in Heq; tauto)).
+    all: intros Hpre;
+         destruct Hpre as [Hpre | (Hpre & Hpre')]; [auto | right; split; auto];
+         destruct Hpre'; [subst | tauto];
+         pose proof (var_free_subst v w t (STyp_Var v') Hpre) as Hfree; cbn in Hfree;
+         destruct Hfree as [(? & _) | [Hfalse | Hfalse]]; auto; try subst v'; tauto.
+  Qed.
+
+  Lemma rename_subst_parallel :
+  forall t v e w w',
+  v <> w ->
+  v <> w' ->
+  ~ In w (fvar e) ->
+  styp_subst v (styp_subst w t (STyp_Var w')) e = styp_subst w (styp_subst v t e) (STyp_Var w').
+  Proof.
+    intros t v e w w' Hneq1 Hneq2 Hnin.
+    induction t; cbn.
+    1,2: repeat match goal with |- context[eqb ?a ?b] => destruct (eqb_spec a b); try subst; cbn end; try tauto.
+    1,2: rewrite styp_subst_no_free_ident; auto.
+    1: unfold fvar; rewrite var_free_dual; auto.
+    1,2: auto.
+    1,2,3,4: rewrite IHt1, IHt2; auto.
+    1,2: rewrite IHt; auto.
+    3,4,5,6: auto.
+
+    all: destruct (eqb_spec v0 w).
+    1,3: subst w; cbn; destruct (eqb_spec v0 v); cbn; rewrite eqb_refl; auto.
+    all: cbn; destruct (eqb_spec v0 v); [subst|]; cbn.
+    1,3: destruct (eqb_spec v w); [tauto|]; auto.
+    all: destruct (eqb_spec v0 w); [tauto | rewrite IHt; auto].
+  Qed.
+
+  Lemma subst_after_rename :
+  forall t v v' e,
+  ~ In v' (fvar t) ->
+  ~ In v' (styp_forbidden t v) ->
+  styp_subst v t e = styp_subst v' (styp_subst v t (STyp_Var v')) e.
+  Proof.
+    intros t v v' e.
+    induction t; cbn.
+    1,2: repeat match goal with |- context[eqb ?a ?b] => destruct (eqb_spec a b); try subst; cbn end; tauto.
+    1,2: tauto.
+    1,2,3,4: repeat rewrite in_app_iff; intros Hpre1 Hpre2;
+             specialize (IHt1 ltac:(tauto) ltac:(tauto));
+             specialize (IHt2 ltac:(tauto) ltac:(tauto));
+             rewrite IHt1, IHt2; tauto.
+    1,2: intros Hpre1 Hpre2; specialize (IHt Hpre1 Hpre2); rewrite IHt; tauto.
+    3,4,5,6: tauto.
+
+    all: destruct (eqb_spec v0 v).
+    1,3: intros Hpre _; rewrite styp_subst_no_free_ident; auto.
+    all: destruct (in_dec eq_dec v (fvar t)).
+    2,4: intros Hpre1 Hpre2; do 2 (rewrite styp_subst_no_free_ident; cbn; auto).
+    2,3: rewrite fvar'_prop, filter_In, neg_in_dec_true_iff in Hpre1; cbn in Hpre1;
+         destruct (eqb_spec v0 v'); auto;
+         rewrite styp_subst_no_free_ident; tauto.
+    all: cbn; intros Hpre1 Hpre2; rewrite fvar'_prop, filter_In, neg_in_dec_true_iff in Hpre1; cbn in Hpre1.
+    all: rewrite styp_forbidden'_prop in Hpre2; cbn in Hpre2.
+    all: destruct (eqb_spec v0 v'); [tauto|].
+    all: specialize (IHt ltac:(tauto) ltac:(tauto)); rewrite IHt; auto.
+  Qed.
+
+  Lemma reverse_rename :
+  forall t v v',
+  v <> v' ->
+  ~ In v' (fvar t) ->
+  ~ In v' (styp_forbidden t v) ->
+  ~ In v (styp_forbidden (styp_subst v t (STyp_Var v')) v').
+  Proof.
+    intros t v v' Hneq.
+    induction t; cbn.
+    1,2: repeat match goal with |- context[eqb ?a ?b] => destruct (eqb_spec a b); try subst; cbn end; tauto.
+    1,2: tauto.
+    1,2,3,4: repeat rewrite in_app_iff; intros Hpre1 Hpre2;
+             specialize (IHt1 ltac:(tauto) ltac:(tauto));
+             specialize (IHt2 ltac:(tauto) ltac:(tauto));
+             tauto.
+    1,2: apply IHt.
+    3,4,5,6: tauto.
+
+    all: destruct (eqb_spec v0 v).
+    1,3: subst v; cbn; destruct (eqb_spec v0 v'); [tauto|].
+    1,2: intros Hpre _; rewrite fvar'_prop, filter_In, neg_in_dec_true_iff in Hpre; cbn in Hpre.
+    1,2: rewrite styp_forbidden_empty; tauto.
+    all: destruct (in_dec eq_dec v (fvar t)).
+    2,4: rewrite styp_subst_no_free_ident; auto; cbn.
+    2,3: rewrite styp_subst_no_free_ident in IHt; auto;
+         destruct (eqb_spec v0 v'); [tauto|].
+    2,3: intros Hpre1 Hpre2;
+         rewrite fvar'_prop, filter_In, neg_in_dec_true_iff in Hpre1;
+         rewrite styp_forbidden'_prop in Hpre2;
+         cbn in Hpre1, Hpre2.
+    2,3: specialize (IHt ltac:(tauto) ltac:(tauto));
+         rewrite styp_forbidden'_prop; cbn; tauto.
+    all: intros Hpre1 Hpre2;
+         rewrite fvar'_prop, filter_In, neg_in_dec_true_iff in Hpre1;
+         rewrite styp_forbidden'_prop in Hpre2;
+         cbn in Hpre1, Hpre2; cbn.
+    all: destruct (eqb_spec v0 v'); [tauto|].
+    all: specialize (IHt ltac:(tauto) ltac:(tauto)).
+    all: rewrite styp_forbidden'_prop; cbn; tauto.
+  Qed.
+
+  Lemma var_rename_ident :
+  forall v t,
+  styp_subst v t (STyp_Var v) = t.
+  Proof.
+    intros v t.
+    induction t; cbn.
+    1,2: repeat match goal with |- context[eqb ?a ?b] => destruct (eqb_spec a b); try subst; cbn end; tauto.
+    all: try congruence.
+    all: destruct (eqb v0 v); congruence.
+  Qed.
+
 End Wadler_Types.
 
 Module Wadler_Types_M (PropVarName : UsualDecidableType).

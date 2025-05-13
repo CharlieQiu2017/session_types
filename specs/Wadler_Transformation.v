@@ -368,6 +368,27 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
       rewrite <- H; apply IHHcp.
   Qed.
 
+  Lemma cp_inv_intyp_rename :
+  forall x v v' p senv,
+  cp (Proc_InTypRename x v v' p) senv ->
+  exists a gamma,
+    ~ In v' (styp_forbidden a v) /\
+    ~ In v' (fvar a) /\
+    cp p ((x, STyp_Forall v a) :: gamma) /\
+    Permutation ((x, STyp_Forall v' (styp_subst v a (STyp_Var v'))) :: gamma) senv.
+  Proof.
+    intros x v v' p senv Hcp.
+    remember (Proc_InTypRename x v v' p) as r.
+    revert x v v' p Heqr.
+    induction Hcp; try discriminate.
+    - intros x' w' w'' p'; intros Heq; injection Heq; intros; subst x' w' w'' p'.
+      exists a; exists gamma; repeat split; auto.
+    - intros x' w' w'' p'; intros Heq; specialize (IHHcp _ _ _ _ Heq).
+      destruct IHHcp as (a & senv & IHHcp); exists a; exists senv.
+      repeat split; try apply IHHcp.
+      rewrite <- H; apply IHHcp.
+  Qed.
+
   Lemma cp_inv_outunit :
   forall x senv,
   cp (Proc_OutUnit x) senv ->
@@ -471,6 +492,69 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
       2: rewrite Hnil.
       2: constructor; auto.
       cbn; auto.
+  Qed.
+
+  (* Two processes are typing-equivalent if whenever one process is typed by senv, the other process can also be typed by senv *)
+  Definition proc_equiv p q : Prop := forall senv, cp p senv <-> cp q senv.
+
+  #[export] Instance proc_equiv_Equivalence : Equivalence proc_equiv.
+  Proof.
+    constructor.
+    - intros p senv; tauto.
+    - intros p q; unfold proc_equiv; firstorder.
+    - intros p q r; unfold proc_equiv; firstorder.
+  Qed.
+
+  #[export] Instance prov_equiv_proper : Proper (proc_equiv ==> @Logic.eq SEnv ==> iff) (fun p senv => cp p senv).
+  Proof. intros p q Hequiv senv senv' Heq; subst; apply Hequiv. Qed.
+
+  #[export] Instance cp_comp_and_split_proper : Proper (@Logic.eq (chn) ==> @Logic.eq (STyp) ==> @Permutation (chn) ==> @Logic.eq (Process) ==> @Logic.eq (Process) ==> proc_equiv) (fun x t l p q => Proc_CompAndSplit x t l p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros t t' Heq; subst t'.
+    intros l l' Hperm.
+    intros p p' Heq; subst p'.
+    intros q q' Heq; subst q'.
+    split; intros Hcp.
+    all: destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp1 & Hcp2 & Hcp3 & Hcp4 & Hcp5 & Hcp6); subst.
+    all: rewrite <- Hcp6.
+    2: symmetry in Hperm.
+    all: pose proof (map_permutation_ex _ _ _ Hperm) as (L' & HL'1 & HL'2); subst.
+    all: rewrite HL'1; rewrite HL'1 in Hcp4, Hcp5.
+    all: constructor; auto.
+    all: rewrite <- HL'1; auto.
+  Qed.
+
+  #[export] Instance cp_outch_and_split_proper : Proper (@Logic.eq (chn) ==> @Logic.eq (chn) ==> @Permutation (chn) ==> @Logic.eq (Process) ==> @Logic.eq (Process) ==> proc_equiv) (fun x y l p q => Proc_OutChAndSplit x y l p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros l l' Hperm.
+    intros p p' Heq; subst p'.
+    intros q q' Heq; subst q'.
+    split; intros Hcp.
+    all: destruct (cp_inv_outch_and_split _ _ _ _ _ _ Hcp) as (a & b & gamma & delta1 & delta2 & Hcp1 & Hcp2 & Hcp3 & Hcp4 & Hcp5 & Hcp6 & Hcp7); subst.
+    all: rewrite <- Hcp7.
+    2: symmetry in Hperm.
+    all: pose proof (map_permutation_ex _ _ _ Hperm) as (L' & HL'1 & HL'2); subst.
+    all: rewrite HL'1; rewrite HL'1 in Hcp5, Hcp6.
+    all: constructor; auto.
+    all: rewrite <- HL'1; auto.
+  Qed.
+
+  #[export] Instance cp_emptycase_proper :
+  Proper (@Logic.eq (chn) ==> @Permutation (chn) ==> proc_equiv) (fun y l => Proc_EmptyCase y l).
+  Proof.
+    intros y y' Heq; subst y'.
+    intros l l' Hperm.
+    split; intros Hcp.
+    all: destruct (cp_inv_emptycase _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2); subst.
+    all: assert (Hy : ~ In y (map fst gamma)) by (rewrite <- Hcp'2 in Hcp; eauto with senv_valid).
+    2: symmetry in Hperm.
+    all: pose proof (map_permutation_ex _ _ _ Hperm) as (L' & HL'1 & HL'2); subst.
+    all: rewrite <- Hcp'2, HL'1; constructor.
+    1,3: rewrite <- HL'1; auto.
+    all: rewrite <- HL'1; rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
   Qed.
 
   Lemma proc_swap' :
@@ -1403,7 +1487,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite <- Hcp'6 in Hy3.
     do 2 rewrite in_app_iff in Hy3.
     destruct Hy3 as [Hy3 | Hy3].
-    1: exfalso; apply Hy2; rewrite in_map_iff; eexists; split; try apply Hy3; auto.
+    1: apply (in_map fst) in Hy3; tauto.
 
     (* y cannot be same as x *)
     assert (Hy4 : x <> y).
@@ -1412,8 +1496,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
       rewrite map_app, in_app_iff in Hcp'4, Hcp'5.
       intros Heq; subst y.
       destruct Hy3 as [Hy3 | Hy3].
-      all: match type of Hy3 with In (?x, ?b) ?l => assert (Hx : In x (map fst l)) by (rewrite in_map_iff; eexists; split; try apply Hy3; auto) end.
-      all: tauto.
+      all: apply (in_map fst) in Hy3; tauto.
     }
 
     (* Simplify Hy1 *)
@@ -1427,7 +1510,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     destruct Hy3 as [Hy3 | Hy3].
     2: clear Hy1.
     1: { unfold senv_disjoint in Hcp'3.
-         specialize (Hcp'3 y ltac:(rewrite in_map_iff; eexists; split; try apply Hy3; auto)).
+         specialize (Hcp'3 y ltac:(apply (in_map fst) in Hy3; auto)).
          contradiction.
     }
 
@@ -1555,25 +1638,14 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma cp_comp_q_r :
   cp (Proc_CompAndSplit y b assoc_new_l1 q r) (assoc_new_L1 ++ (x, dual a) :: assoc_delta_no_new_L1 ++ assoc_theta_no_new_L1).
   Proof.
-    assert (Hnew_L1 : exists new_L1'', Permutation assoc_new_L1 new_L1'' /\ map fst new_L1'' = assoc_new_l1).
-    { pose proof new_l1_def as Hperm.
-      specialize (Hperm _ _ _ assoc_delta_channels_def assoc_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst assoc_new_L1 _ Hperm) as (new_L1'' & Hperm1 & Hperm2).
-      exists new_L1''; split; auto.
-    }
-    destruct Hnew_L1 as (new_L1'' & Hnew_L1_1 & Hnew_L1_2).
-    rewrite <- Hnew_L1_2.
-    rewrite Hnew_L1_1.
-
+    pose proof (new_l1_def _ _ _ assoc_delta_channels_def assoc_theta_channels) as Hperm.
+    rewrite Hperm; fold assoc_new_L1.
     pose proof proc_q_perm as Hcp12.
     pose proof proc_r_perm as Hcp13.
-    rewrite Hnew_L1_1 in Hcp12, Hcp13.
     rewrite app_comm_cons.
     constructor; auto.
 
-    - rewrite <- Hnew_L1_1.
-      pose proof (new_L1_ques) as H.
+    - pose proof (new_L1_ques) as H.
       specialize (H _ _ _ _ _ _ Hcp4 Hcp6 assoc_Hcp9' assoc_Hcp11' _ assoc_theta_channels_def).
       auto.
 
@@ -1613,24 +1685,14 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   (* We are now ready to cut P and (Q | R). *)
   Lemma cp_comp_p_q_r :
   cp (Proc_CompAndSplit x a assoc_new_l2 p (Proc_CompAndSplit y b assoc_new_l1 q r)) (assoc_new_L2 ++ assoc_gamma_no_new_L2 ++ assoc_delta_theta_no_new_L2).
-    assert (Hnew_L2 : exists new_L2'', Permutation assoc_new_L2 new_L2'' /\ map fst new_L2'' = assoc_new_l2).
-    { pose proof new_l2_def as Hperm.
-      specialize (Hperm _ _ _ assoc_gamma_channels_def assoc_delta_channels assoc_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst assoc_new_L2 _ Hperm) as (new_L2'' & Hperm1 & Hperm2).
-      exists new_L2''; split; auto.
-    }
-    destruct Hnew_L2 as (new_L2'' & Hnew_L2_1 & Hnew_L2_2).
-    rewrite <- Hnew_L2_2.
-    rewrite Hnew_L2_1.
-
+  Proof.
+    pose proof (new_l2_def _ _ _ assoc_gamma_channels_def assoc_delta_channels assoc_theta_channels) as Hperm.
+    rewrite Hperm; fold assoc_new_L2.
     pose proof proc_p_perm as Hcp'1.
     pose proof proc_q_r_perm as Hcp'2.
-    rewrite Hnew_L2_1 in Hcp'1, Hcp'2.
     constructor; auto.
 
-    - rewrite <- Hnew_L2_1.
-      pose proof new_L2_ques as H.
+    - pose proof new_L2_ques as H.
       specialize (H _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 assoc_Hcp7' assoc_Hcp8' assoc_Hcp9' assoc_Hcp10' assoc_Hcp11' _ assoc_delta_channels_def _ assoc_theta_channels_def).
       auto.
 
@@ -1870,16 +1932,8 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_cut_q_r :
   cp (Proc_CompAndSplit x b outch_new_l1 q r) (outch_new_L1 ++ outch_delta_no_new_L1 ++ (y, dual a) :: outch_theta_no_new_L1).
   Proof.
-    assert (Hnew_L1 : exists new_L1'', Permutation outch_new_L1 new_L1'' /\ map fst new_L1'' = outch_new_l1).
-    { pose proof new_l1_def as Hperm.
-      specialize (Hperm _ _ _ outch_delta_channels_def outch_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_new_L1 _ Hperm) as (new_L1'' & Hperm1 & Hperm2).
-      exists new_L1''; split; auto.
-    }
-    destruct Hnew_L1 as (new_L1'' & Hnew_L1_1 & Hnew_L1_2).
-    rewrite <- Hnew_L1_2.
-    rewrite Hnew_L1_1.
+    pose proof (new_l1_def _ _ _ outch_delta_channels_def outch_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_new_L1.
 
     pose proof Hcp8 as Hcp8'.
     pose proof (delta_split L1 delta_no_L1 outch_theta_channels) as Hperm1.
@@ -1888,11 +1942,9 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     pose proof (theta_split _ _ _ _ _ _ Hcp6 outch_Hcp8' outch_Hcp9' outch_Hcp10' outch_Hcp11' _ outch_delta_channels_def _ outch_theta_channels_def) as Hperm2.
     rewrite Hperm2 in Hcp9'.
     rewrite Permutation_middle in Hcp9'.
-    rewrite Hnew_L1_1 in Hcp8', Hcp9'.
 
     constructor; auto.
-    - rewrite <- Hnew_L1_1.
-      apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_Hcp9' outch_Hcp11' _ outch_theta_channels_def).
+    - apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_Hcp9' outch_Hcp11' _ outch_theta_channels_def).
     - intros z Hz1 Hz2.
       cbn in Hz2.
       destruct Hz2 as [Hz2 | Hz2].
@@ -1918,26 +1970,16 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_cut_p_q_r :
   cp (Proc_CompAndSplit y a outch_new_l2 p (Proc_CompAndSplit x b outch_new_l1 q r)) (outch_new_L2 ++ outch_gamma_no_new_L2 ++ outch_delta_theta_no_new_L2).
   Proof.
-    assert (Hnew_L2 : exists new_L2'', Permutation outch_new_L2 new_L2'' /\ map fst new_L2'' = outch_new_l2).
-    { pose proof new_l2_def as Hperm.
-      specialize (Hperm _ _ _ outch_gamma_channels_def outch_delta_channels outch_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_new_L2 _ Hperm) as (new_L2'' & Hperm1 & Hperm2).
-      exists new_L2''; split; auto.
-    }
-    destruct Hnew_L2 as (new_L2'' & Hnew_L2_1 & Hnew_L2_2).
-    rewrite <- Hnew_L2_2.
-    rewrite Hnew_L2_1.
+    pose proof (new_l2_def _ _ _ outch_gamma_channels_def outch_delta_channels outch_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_new_L2.
 
     pose proof Hcp7 as Hcp7'.
     pose proof (gamma_split L1 gamma_no_L1 outch_delta_channels outch_theta_channels) as Hperm1.
     rewrite Hperm1 in Hcp7'.
     pose proof outch_q_r_perm as Hcp'2.
-    rewrite Hnew_L2_1 in Hcp7', Hcp'2.
 
     constructor; auto.
-    - rewrite <- Hnew_L2_1.
-      apply (new_L2_ques _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 outch_Hcp7' outch_Hcp8' outch_Hcp9' outch_Hcp10' outch_Hcp11' _ outch_delta_channels_def _ outch_theta_channels_def).
+    - apply (new_L2_ques _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 outch_Hcp7' outch_Hcp8' outch_Hcp9' outch_Hcp10' outch_Hcp11' _ outch_delta_channels_def _ outch_theta_channels_def).
     - apply (gamma_no_new_L2_delta_theta_no_new_L2_disjoint _ _ _ _ _ _ Hcp6 outch_Hcp8' outch_Hcp9' outch_Hcp10' outch_Hcp11' outch_gamma_channels _ outch_delta_channels_def _ outch_theta_channels_def).
   Qed.
 
@@ -2483,25 +2525,15 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma comp_split_comp_p_q :
   cp (Proc_CompAndSplit x (STyp_Excl t) comp_split_new_l3 (Proc_Server x y p) q) (comp_split_new_L3 ++ comp_split_theta_no_new_L3 ++ (z, t1) :: comp_split_gamma_no_new_L3).
   Proof.
-    assert (Hnew_L3 : exists new_L3'', Permutation comp_split_new_L3 new_L3'' /\ map fst new_L3'' = comp_split_new_l3).
-    { pose proof new_l3_def as Hperm.
-      specialize (Hperm _ _ comp_split_gamma_channels _ comp_split_theta_channels_def).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst comp_split_new_L3 _ Hperm) as (new_L3'' & Hperm1 & Hperm2).
-      exists new_L3''; split; auto.
-    }
-    destruct Hnew_L3 as (new_L3'' & Hnew_L3_1 & Hnew_L3_2).
-    rewrite <- Hnew_L3_2.
-    rewrite Hnew_L3_1.
+    pose proof (new_l3_def _ _ comp_split_gamma_channels _ comp_split_theta_channels_def) as Hperm.
+    rewrite Hperm; fold comp_split_new_L3.
 
     pose proof Hcp9 as Hcp12.
     rewrite (l3_theta_split L2 theta_no_L2 comp_split_gamma_channels) in Hcp12.
     pose proof comp_split_q_perm as Hcp13.
-    rewrite Hnew_L3_1 in Hcp12, Hcp13.
     constructor; auto.
 
-    - rewrite <- Hnew_L3_1.
-      apply (new_L3_ques _ _ _ _ _ _ Hcp4 Hcp6 comp_split_Hcp9' comp_split_Hcp11' _ comp_split_gamma_channels_def).
+    - apply (new_L3_ques _ _ _ _ _ _ Hcp4 Hcp6 comp_split_Hcp9' comp_split_Hcp11' _ comp_split_gamma_channels_def).
 
     - intros w Hw1 Hw2.
       cbn in Hw2.
@@ -2519,25 +2551,15 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma comp_split_comp_p_r :
   cp (Proc_CompAndSplit x (STyp_Excl t) comp_split_new_l1 (Proc_Server x y p) r) (comp_split_new_L1 ++ comp_split_theta_no_new_L1 ++ (z, dual t1) :: comp_split_delta_no_new_L1).
   Proof.
-    assert (Hnew_L1 : exists new_L1'', Permutation comp_split_new_L1 new_L1'' /\ map fst new_L1'' = comp_split_new_l1).
-    { pose proof new_l1_def as Hperm.
-      specialize (Hperm _ _ _ comp_split_delta_channels_def comp_split_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst comp_split_new_L1 _ Hperm) as (new_L1'' & Hperm1 & Hperm2).
-      exists new_L1''; split; auto.
-    }
-    destruct Hnew_L1 as (new_L1'' & Hnew_L1_1 & Hnew_L1_2).
-    rewrite <- Hnew_L1_2.
-    rewrite Hnew_L1_1.
+    pose proof (new_l1_def _ _ _ comp_split_delta_channels_def comp_split_theta_channels) as Hperm.
+    rewrite Hperm; fold comp_split_new_L1.
 
     pose proof Hcp9 as Hcp12.
     rewrite (theta_split _ _ _ _ _ _ Hcp6 comp_split_Hcp8' comp_split_Hcp9' comp_split_Hcp10' comp_split_Hcp11' _ comp_split_delta_channels_def _ comp_split_theta_channels_def) in Hcp12.
     pose proof comp_split_r_perm as Hcp13.
-    rewrite Hnew_L1_1 in Hcp12, Hcp13.
     constructor; auto.
 
-    - rewrite <- Hnew_L1_1.
-      apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 comp_split_Hcp9' comp_split_Hcp11' _ comp_split_theta_channels_def).
+    - apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 comp_split_Hcp9' comp_split_Hcp11' _ comp_split_theta_channels_def).
 
     - intros w Hw1 Hw2.
       cbn in Hw2.
@@ -2580,31 +2602,19 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma comp_split_comp_p_q_r :
   cp (Proc_CompAndSplit z t1 (comp_split_theta_channels ++ comp_split_new_l4) (Proc_CompAndSplit x (STyp_Excl t) comp_split_new_l3 (Proc_Server x y p) q) (Proc_CompAndSplit x (STyp_Excl t) comp_split_new_l1 (Proc_Server x y p) r)) (L2 ++ theta_no_L2 ++ comp_split_new_L4 ++ comp_split_gamma_no_new_L3_no_new_L4 ++ comp_split_delta_no_new_L1_no_new_L4).
   Proof.
-    assert (Hnew_L4 : exists new_L4'', Permutation (L2 ++ theta_no_L2 ++ comp_split_new_L4) new_L4'' /\ map fst new_L4'' = (comp_split_theta_channels ++ comp_split_new_l4)).
-    { pose proof new_l4_def as Hperm.
-      specialize (Hperm _ _ _ comp_split_gamma_channels_def comp_split_delta_channels comp_split_theta_channels).
-      eapply Permutation_app in Hperm.
-      2: apply comp_split_theta_channels_def.
-      rewrite <- map_app, <- app_assoc in Hperm.
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst _ _ Hperm) as (new_L4'' & Hperm1 & Hperm2).
-      exists new_L4''; split; auto.
-    }
-    destruct Hnew_L4 as (new_L4'' & Hnew_L4_1 & Hnew_L4_2).
-    rewrite <- Hnew_L4_2.
+    pose proof (new_l4_def _ _ _ comp_split_gamma_channels_def comp_split_delta_channels comp_split_theta_channels) as Hperm.
+    rewrite Hperm; fold comp_split_new_L4.
     do 2 rewrite app_assoc.
     rewrite <- (app_assoc _ _ comp_split_new_L4).
-    rewrite Hnew_L4_1.
-
+    rewrite comp_split_theta_channels_def.
+    rewrite <- map_app, <- app_assoc.
     pose proof comp_split_p_q_perm as Hcp12.
     pose proof comp_split_p_r_perm as Hcp13.
     do 2 rewrite app_assoc in Hcp12, Hcp13.
     rewrite <- (app_assoc L2) in Hcp12, Hcp13.
-    rewrite Hnew_L4_1 in Hcp12, Hcp13.
     constructor; auto.
 
-    - rewrite <- Hnew_L4_1.
-      do 2 rewrite map_app, Forall_app.
+    - do 2 rewrite map_app, Forall_app.
       repeat split; auto.
       apply (new_L4_ques _ _ _ _ _ _ Hcp3 Hcp6 comp_split_Hcp7' comp_split_Hcp8' comp_split_Hcp9' comp_split_Hcp10' comp_split_Hcp11' _ comp_split_gamma_channels_def _ comp_split_delta_channels_def _ comp_split_theta_channels_def).
 
@@ -2858,25 +2868,15 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_split_comp_p_q :
   cp (Proc_CompAndSplit x (STyp_Excl t) outch_split_new_l3 (Proc_Server x y p) q) (outch_split_new_L3 ++ outch_split_theta_no_new_L3 ++ (w, a) :: outch_split_gamma_no_new_L3).
   Proof.
-    assert (Hnew_L3 : exists new_L3'', Permutation outch_split_new_L3 new_L3'' /\ map fst new_L3'' = outch_split_new_l3).
-    { pose proof new_l3_def as Hperm.
-      specialize (Hperm _ _ outch_split_gamma_channels _ outch_split_theta_channels_def).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_split_new_L3 _ Hperm) as (new_L3'' & Hperm1 & Hperm2).
-      exists new_L3''; split; auto.
-    }
-    destruct Hnew_L3 as (new_L3'' & Hnew_L3_1 & Hnew_L3_2).
-    rewrite <- Hnew_L3_2.
-    rewrite Hnew_L3_1.
+    pose proof (new_l3_def _ _ outch_split_gamma_channels _ outch_split_theta_channels_def) as Hperm.
+    rewrite Hperm; fold outch_split_new_L3.
 
     pose proof Hcp9 as Hcp12.
     rewrite (l3_theta_split L2 theta_no_L2 outch_split_gamma_channels) in Hcp12.
     pose proof outch_split_q_perm as Hcp13.
-    rewrite Hnew_L3_1 in Hcp12, Hcp13.
     constructor; auto.
 
-    - rewrite <- Hnew_L3_1.
-      apply (new_L3_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_split_Hcp9' outch_split_Hcp11' _ outch_split_gamma_channels_def).
+    - apply (new_L3_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_split_Hcp9' outch_split_Hcp11' _ outch_split_gamma_channels_def).
 
     - intros v Hv1 Hv2.
       cbn in Hv2.
@@ -2893,25 +2893,15 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_split_comp_p_r :
   cp (Proc_CompAndSplit x (STyp_Excl t) outch_split_new_l1 (Proc_Server x y p) r) (outch_split_new_L1 ++ outch_split_theta_no_new_L1 ++ (z, b) :: outch_split_delta_no_new_L1).
   Proof.
-    assert (Hnew_L1 : exists new_L1'', Permutation outch_split_new_L1 new_L1'' /\ map fst new_L1'' = outch_split_new_l1).
-    { pose proof new_l1_def as Hperm.
-      specialize (Hperm _ _ _ outch_split_delta_channels_def outch_split_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_split_new_L1 _ Hperm) as (new_L1'' & Hperm1 & Hperm2).
-      exists new_L1''; split; auto.
-    }
-    destruct Hnew_L1 as (new_L1'' & Hnew_L1_1 & Hnew_L1_2).
-    rewrite <- Hnew_L1_2.
-    rewrite Hnew_L1_1.
+    pose proof (new_l1_def _ _ _ outch_split_delta_channels_def outch_split_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_split_new_L1.
 
     pose proof Hcp9 as Hcp12.
     rewrite (theta_split _ _ _ _ _ _ Hcp6 outch_split_Hcp8' outch_split_Hcp9' outch_split_Hcp10' outch_split_Hcp11' _ outch_split_delta_channels_def _ outch_split_theta_channels_def) in Hcp12.
     pose proof outch_split_r_perm as Hcp13.
-    rewrite Hnew_L1_1 in Hcp12, Hcp13.
     constructor; auto.
 
-    - rewrite <- Hnew_L1_1.
-      apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_split_Hcp9' outch_split_Hcp11' _ outch_split_theta_channels_def).
+    - apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_split_Hcp9' outch_split_Hcp11' _ outch_split_theta_channels_def).
 
     - intros v Hv1 Hv2.
       cbn in Hv2.
@@ -2952,31 +2942,20 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_split_comp_p_q_r :
   cp (Proc_OutChAndSplit z w (outch_split_theta_channels ++ outch_split_new_l4) (Proc_CompAndSplit x (STyp_Excl t) outch_split_new_l3 (Proc_Server x y p) q) (Proc_CompAndSplit x (STyp_Excl t) outch_split_new_l1 (Proc_Server x y p) r)) ((z, STyp_Times a b) :: L2 ++ theta_no_L2 ++ outch_split_new_L4 ++ outch_split_gamma_no_new_L3_no_new_L4 ++ outch_split_delta_no_new_L1_no_new_L4).
   Proof.
-    assert (Hnew_L4 : exists new_L4'', Permutation (L2 ++ theta_no_L2 ++ outch_split_new_L4) new_L4'' /\ map fst new_L4'' = (outch_split_theta_channels ++ outch_split_new_l4)).
-    { pose proof new_l4_def as Hperm.
-      specialize (Hperm _ _ _ outch_split_gamma_channels_def outch_split_delta_channels outch_split_theta_channels).
-      eapply Permutation_app in Hperm.
-      2: apply outch_split_theta_channels_def.
-      rewrite <- map_app, <- app_assoc in Hperm.
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst _ _ Hperm) as (new_L4'' & Hperm1 & Hperm2).
-      exists new_L4''; split; auto.
-    }
-    destruct Hnew_L4 as (new_L4'' & Hnew_L4_1 & Hnew_L4_2).
-    rewrite <- Hnew_L4_2.
+    pose proof (new_l4_def _ _ _ outch_split_gamma_channels_def outch_split_delta_channels outch_split_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_split_new_L4.
     do 2 rewrite app_assoc.
     rewrite <- (app_assoc _ _ outch_split_new_L4).
-    rewrite Hnew_L4_1.
+    rewrite outch_split_theta_channels_def.
+    rewrite <- map_app, <- app_assoc.
 
     pose proof outch_split_p_q_perm as Hcp12.
     pose proof outch_split_p_r_perm as Hcp13.
     do 2 rewrite app_assoc in Hcp12, Hcp13.
     rewrite <- (app_assoc L2) in Hcp12, Hcp13.
-    rewrite Hnew_L4_1 in Hcp12, Hcp13.
     constructor; auto.
 
-    - rewrite <- Hnew_L4_1.
-      do 2 rewrite map_app, Forall_app.
+    - do 2 rewrite map_app, Forall_app.
       repeat split; auto.
       apply (new_L4_ques _ _ _ _ _ _ Hcp3 Hcp6 outch_split_Hcp7' outch_split_Hcp8' outch_split_Hcp9' outch_split_Hcp10' outch_split_Hcp11' _ outch_split_gamma_channels_def _ outch_split_delta_channels_def _ outch_split_theta_channels_def).
 
@@ -3082,8 +3061,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     2: { intros z Hz.
          destruct z; cbn.
          rewrite Forall_forall in Hcp'''1.
-         specialize (Hcp'''1 _ ltac:(rewrite in_map_iff; eexists; split; try apply Hz; auto)).
-         cbn in Hcp'''1.
+         specialize (Hcp'''1 s ltac:(apply (in_map snd) in Hz; auto)).
          rewrite styp_subst_no_free_ident; auto.
     }
     rewrite map_id in Hsubst.
@@ -3094,6 +3072,87 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite Hcp'''3 in Hsubst.
     constructor; auto.
     rewrite styp_subst_dual; auto.
+  Qed.
+
+  Lemma proc_cut_forall_exists_rename :
+  forall x t l a v b p w w' q senv,
+  cp (Proc_CompAndSplit x t l (Proc_OutTyp x a v b p) (Proc_InTypRename x w w' q)) senv ->
+  t = STyp_Exists v b /\
+  w' = v /\
+  cp (Proc_CompAndSplit x (STyp_Exists w (styp_subst w' b (STyp_Var w))) l (Proc_OutTyp x a w (styp_subst w' b (STyp_Var w)) p) q) senv.
+  Proof.
+    intros x t l a v b p w w' q senv Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    subst l.
+
+    (* Invert Hcp'4 *)
+    destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp'4) as (gamma' & Hcp''1 & Hcp''2 & Hcp''3).
+    pose proof Hcp'4 as Hcp''4.
+    apply cp_senv_valid in Hcp''4.
+    rewrite senv_valid_cons in Hcp''4.
+    assert (Hcp''5 : In (x, STyp_Exists v b) ((x, t) :: gamma ++ delta1)) by (rewrite <- Hcp''3; left; auto).
+    cbn in Hcp''5.
+    destruct Hcp''5 as [Hcp''5 | Hcp''5].
+    2: apply (in_map fst) in Hcp''5; cbn in Hcp''5; tauto.
+    injection Hcp''5; intros; subst t; clear Hcp''5.
+    apply Permutation_cons_inv in Hcp''3.
+
+    (* Invert Hcp'5 *)
+    destruct (cp_inv_intyp_rename _ _ _ _ _ Hcp'5) as (a' & delta' & Hcp'''1 & Hcp'''2 & Hcp'''3 & Hcp'''4).
+    pose proof Hcp'5 as Hcp'''5.
+    apply cp_senv_valid in Hcp'''5.
+    rewrite senv_valid_cons in Hcp'''5.
+    cbn in Hcp'''4.
+    assert (Hcp'''6 : In (x, STyp_Forall w' (styp_subst w a' (STyp_Var w'))) ((x, STyp_Forall v (dual b)) :: gamma ++ delta2)) by (rewrite <- Hcp'''4; left; auto).
+    cbn in Hcp'''6.
+    destruct Hcp'''6 as [Hcp'''6 | Hcp'''6].
+    2: apply (in_map fst) in Hcp'''6; cbn in Hcp'''6; tauto.
+    injection Hcp'''6; intros; subst v.
+    assert (H0 : dual (dual b) = dual (styp_subst w a' (STyp_Var w'))) by (f_equal; auto).
+    rewrite dual_involute in H0; subst b.
+    clear H.
+    rewrite dual_involute in Hcp'''4.
+    apply Permutation_cons_inv in Hcp'''4.
+    cbn in Hcp'''5.
+    clear Hcp'''6.
+
+    (* Simplify some propositions *)
+    cbn in Hcp'5, Hcp'4, Hcp''4.
+    rewrite dual_involute in Hcp'5.
+    rewrite styp_subst_dual in Hcp'4, Hcp''1, Hcp''2.
+    rewrite styp_subst_dual.
+
+    repeat split; auto.
+
+    assert (Hcp'''1_alt : ~ In w' (styp_forbidden (dual a') w)).
+    { unfold styp_forbidden; rewrite styp_forbidden_dual; auto. }
+    assert (Hcp'''2_alt : ~ In w' (fvar (dual a'))).
+    { unfold fvar; rewrite var_free_dual; auto. }
+
+    assert (Hp : styp_subst w' (styp_subst w (dual a') (STyp_Var w')) a = styp_subst w (dual a') a).
+    { symmetry; apply subst_after_rename; auto. }
+    rewrite Hp in Hcp''2.
+    assert (Hex : styp_subst w' (styp_subst w (dual a') (STyp_Var w')) (STyp_Var w) = dual a').
+    { rewrite <- subst_after_rename; auto.
+      rewrite var_rename_ident; auto.
+    }
+    rewrite Hex.
+
+    rewrite <- Hcp'6.
+    constructor; auto.
+    2: cbn; rewrite dual_involute; rewrite Hcp'''4 in Hcp'''3; auto.
+    constructor.
+    2: rewrite Hcp''3 in Hcp''2; auto.
+
+    rewrite Forall_forall; rewrite Forall_forall in Hcp''1.
+    intros z Hz; specialize (Hcp''1 _ Hz).
+    destruct (pvn_eqb_spec w' w).
+    1: subst w'; rewrite var_rename_ident in Hcp''1; auto.
+    rewrite <- Hex.
+    apply styp_subst_forbidden; auto.
+    2: cbn; rewrite pvn_eqb_refl; auto.
+    unfold styp_forbidden; rewrite styp_forbidden_empty; auto.
+    intros Hin; apply var_free_subst in Hin; cbn in Hin; tauto.
   Qed.
 
   Lemma proc_cut_outunit_inunit :
@@ -3191,7 +3250,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     assert (Hy1 : In (y, STyp_Times a b) (L2 ++ gamma_delta_y_no_L2)) by (rewrite <- Hcp'7; left; auto).
     rewrite in_app_iff in Hy1.
     destruct Hy1 as [Hy1 | Hy1].
-    1: rewrite Forall_forall in Hcp1; specialize (Hcp1 (STyp_Times a b) ltac:(rewrite in_map_iff; eexists; split; try apply Hy1; auto)); contradiction.
+    1: rewrite Forall_forall in Hcp1; specialize (Hcp1 (STyp_Times a b) ltac:(apply (in_map snd) in Hy1; auto)); contradiction.
     pose proof (in_split_perm _ _ Hy1) as (gamma_delta_no_L2 & HL2).
     rewrite HL2 in Hcp'7.
     rewrite <- Permutation_middle in Hcp'7.
@@ -3292,16 +3351,8 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_comm1_cut_p_r :
   cp (Proc_CompAndSplit x t outch_comm1_new_l1 p r) (outch_comm1_new_L1 ++ (z, a) :: outch_comm1_delta_no_new_L1 ++ outch_comm1_theta_no_new_L1).
   Proof.
-    assert (Hnew_L1 : exists new_L1'', Permutation outch_comm1_new_L1 new_L1'' /\ map fst new_L1'' = outch_comm1_new_l1).
-    { pose proof new_l1_def as Hperm.
-      specialize (Hperm _ _ _ outch_comm1_delta_channels_def outch_comm1_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_comm1_new_L1 _ Hperm) as (new_L1'' & Hperm1 & Hperm2).
-      exists new_L1''; split; auto.
-    }
-    destruct Hnew_L1 as (new_L1'' & Hnew_L1_1 & Hnew_L1_2).
-    rewrite <- Hnew_L1_2.
-    rewrite Hnew_L1_1.
+    pose proof (new_l1_def _ _ _ outch_comm1_delta_channels_def outch_comm1_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_comm1_new_L1.
 
     pose proof Hcp8 as Hcp8'.
     rewrite perm_swap in Hcp8'.
@@ -3311,12 +3362,10 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     pose proof Hcp9 as Hcp9'.
     pose proof (theta_split _ _ _ _ _ _ Hcp6 outch_comm1_Hcp8' outch_comm1_Hcp9' outch_comm1_Hcp10' outch_comm1_Hcp11' _ outch_comm1_delta_channels_def _ outch_comm1_theta_channels_def) as Hperm2.
     rewrite Hperm2 in Hcp9'.
-    rewrite Hnew_L1_1 in Hcp8', Hcp9'.
 
     rewrite app_comm_cons.
     constructor; auto.
-    - rewrite <- Hnew_L1_1.
-      apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_comm1_Hcp9' outch_comm1_Hcp11' _ outch_comm1_theta_channels_def).
+    - apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_comm1_Hcp9' outch_comm1_Hcp11' _ outch_comm1_theta_channels_def).
     - intros w Hw1 Hw2.
       cbn in Hw1.
       destruct Hw1 as [Hw1 | Hw1].
@@ -3342,25 +3391,15 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_comm1_cut_p_r_q :
   cp (Proc_OutChAndSplit y z outch_comm1_new_l2 (Proc_CompAndSplit x t outch_comm1_new_l1 p r) q) ((y, STyp_Times a b) :: outch_comm1_new_L2 ++ outch_comm1_delta_theta_no_new_L2 ++ outch_comm1_gamma_no_new_L2).
   Proof.
-    assert (Hnew_L2 : exists new_L2'', Permutation outch_comm1_new_L2 new_L2'' /\ map fst new_L2'' = outch_comm1_new_l2).
-    { pose proof new_l2_def as Hperm.
-      specialize (Hperm _ _ _ outch_comm1_gamma_channels_def outch_comm1_delta_channels outch_comm1_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_comm1_new_L2 _ Hperm) as (new_L2'' & Hperm1 & Hperm2).
-      exists new_L2''; split; auto.
-    }
-    destruct Hnew_L2 as (new_L2'' & Hnew_L2_1 & Hnew_L2_2).
-    rewrite <- Hnew_L2_2.
-    rewrite Hnew_L2_1.
+    pose proof (new_l2_def _ _ _ outch_comm1_gamma_channels_def outch_comm1_delta_channels outch_comm1_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_comm1_new_L2.
 
     pose proof Hcp7 as Hcp7'.
     pose proof (gamma_split L1 gamma_no_L1 outch_comm1_delta_channels outch_comm1_theta_channels) as Hperm1.
     rewrite Hperm1 in Hcp7'.
     pose proof outch_comm1_p_r_perm as Hcp'2.
-    rewrite Hnew_L2_1 in Hcp7', Hcp'2.
     constructor; auto.
-    - rewrite <- Hnew_L2_1.
-      apply (new_L2_ques _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 outch_comm1_Hcp7' outch_comm1_Hcp8' outch_comm1_Hcp9' outch_comm1_Hcp10' outch_comm1_Hcp11' _ outch_comm1_delta_channels_def _ outch_comm1_theta_channels_def).
+    - apply (new_L2_ques _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 outch_comm1_Hcp7' outch_comm1_Hcp8' outch_comm1_Hcp9' outch_comm1_Hcp10' outch_comm1_Hcp11' _ outch_comm1_delta_channels_def _ outch_comm1_theta_channels_def).
 
     - intros Hin.
       assert (Hin' : In y (map fst (outch_comm1_new_L2 ++ outch_comm1_delta_theta_no_new_L2))) by (rewrite map_app, in_app_iff; auto).
@@ -3484,7 +3523,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     assert (Hy1 : In (y, STyp_Times a b) (L2 ++ gamma_delta_y_no_L2)) by (rewrite <- Hcp'7; left; auto).
     rewrite in_app_iff in Hy1.
     destruct Hy1 as [Hy1 | Hy1].
-    1: rewrite Forall_forall in Hcp1; specialize (Hcp1 (STyp_Times a b) ltac:(rewrite in_map_iff; eexists; split; try apply Hy1; auto)); contradiction.
+    1: rewrite Forall_forall in Hcp1; specialize (Hcp1 (STyp_Times a b) ltac:(apply (in_map snd) in Hy1; auto)); contradiction.
     pose proof (in_split_perm _ _ Hy1) as (gamma_delta_no_L2 & HL2).
     rewrite HL2 in Hcp'7.
     rewrite <- Permutation_middle in Hcp'7.
@@ -3584,16 +3623,8 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_comm2_cut_q_r :
   cp (Proc_CompAndSplit x t outch_comm2_new_l1 q r) (outch_comm2_new_L1 ++ (y, b) :: outch_comm2_delta_no_new_L1 ++ outch_comm2_theta_no_new_L1).
   Proof.
-    assert (Hnew_L1 : exists new_L1'', Permutation outch_comm2_new_L1 new_L1'' /\ map fst new_L1'' = outch_comm2_new_l1).
-    { pose proof new_l1_def as Hperm.
-      specialize (Hperm _ _ _ outch_comm2_delta_channels_def outch_comm2_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_comm2_new_L1 _ Hperm) as (new_L1'' & Hperm1 & Hperm2).
-      exists new_L1''; split; auto.
-    }
-    destruct Hnew_L1 as (new_L1'' & Hnew_L1_1 & Hnew_L1_2).
-    rewrite <- Hnew_L1_2.
-    rewrite Hnew_L1_1.
+    pose proof (new_l1_def _ _ _ outch_comm2_delta_channels_def outch_comm2_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_comm2_new_L1.
 
     pose proof Hcp8 as Hcp8'.
     rewrite perm_swap in Hcp8'.
@@ -3603,12 +3634,10 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     pose proof Hcp9 as Hcp9'.
     pose proof (theta_split _ _ _ _ _ _ Hcp6 outch_comm2_Hcp8' outch_comm2_Hcp9' outch_comm2_Hcp10' outch_comm2_Hcp11' _ outch_comm2_delta_channels_def _ outch_comm2_theta_channels_def) as Hperm2.
     rewrite Hperm2 in Hcp9'.
-    rewrite Hnew_L1_1 in Hcp8', Hcp9'.
 
     rewrite app_comm_cons.
     constructor; auto.
-    - rewrite <- Hnew_L1_1.
-      apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_comm2_Hcp9' outch_comm2_Hcp11' _ outch_comm2_theta_channels_def).
+    - apply (new_L1_ques _ _ _ _ _ _ Hcp4 Hcp6 outch_comm2_Hcp9' outch_comm2_Hcp11' _ outch_comm2_theta_channels_def).
     - intros w Hw1 Hw2.
       cbn in Hw1.
       destruct Hw1 as [Hw1 | Hw1].
@@ -3638,25 +3667,15 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   Lemma outch_comm2_cut_q_r_p :
   cp (Proc_OutChAndSplit y z outch_comm2_new_l2 p (Proc_CompAndSplit x t outch_comm2_new_l1 q r)) ((y, STyp_Times a b) :: outch_comm2_new_L2 ++ outch_comm2_gamma_no_new_L2 ++ outch_comm2_delta_theta_no_new_L2).
   Proof.
-    assert (Hnew_L2 : exists new_L2'', Permutation outch_comm2_new_L2 new_L2'' /\ map fst new_L2'' = outch_comm2_new_l2).
-    { pose proof new_l2_def as Hperm.
-      specialize (Hperm _ _ _ outch_comm2_gamma_channels_def outch_comm2_delta_channels outch_comm2_theta_channels).
-      symmetry in Hperm.
-      destruct (map_permutation_ex fst outch_comm2_new_L2 _ Hperm) as (new_L2'' & Hperm1 & Hperm2).
-      exists new_L2''; split; auto.
-    }
-    destruct Hnew_L2 as (new_L2'' & Hnew_L2_1 & Hnew_L2_2).
-    rewrite <- Hnew_L2_2.
-    rewrite Hnew_L2_1.
+    pose proof (new_l2_def _ _ _ outch_comm2_gamma_channels_def outch_comm2_delta_channels outch_comm2_theta_channels) as Hperm.
+    rewrite Hperm; fold outch_comm2_new_L2.
 
     pose proof Hcp7 as Hcp7'.
     pose proof (gamma_split L1 gamma_no_L1 outch_comm2_delta_channels outch_comm2_theta_channels) as Hperm1.
     rewrite Hperm1 in Hcp7'.
     pose proof outch_comm2_q_r_perm as Hcp'2.
-    rewrite Hnew_L2_1 in Hcp7', Hcp'2.
     constructor; auto.
-    - rewrite <- Hnew_L2_1.
-      apply (new_L2_ques _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 outch_comm2_Hcp7' outch_comm2_Hcp8' outch_comm2_Hcp9' outch_comm2_Hcp10' outch_comm2_Hcp11' _ outch_comm2_delta_channels_def _ outch_comm2_theta_channels_def).
+    - apply (new_L2_ques _ _ _ _ _ _ Hcp3 Hcp4 Hcp6 outch_comm2_Hcp7' outch_comm2_Hcp8' outch_comm2_Hcp9' outch_comm2_Hcp10' outch_comm2_Hcp11' _ outch_comm2_delta_channels_def _ outch_comm2_theta_channels_def).
 
     - intros Hin.
       assert (Hin' : In y (map fst (outch_comm2_new_L2 ++ outch_comm2_gamma_no_new_L2))) by (rewrite map_app, in_app_iff; auto).
@@ -3721,17 +3740,12 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite in_app_iff in Hy.
 
     (* y not in gamma *)
-    assert (Hy' : ~ In y (map fst gamma)).
-    { intros Hin.
-      assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
-      specialize (Hdisjoint _ Hin).
-      destruct Hy as [Hy | Hy].
-      1: rewrite Forall_forall in Hcp'1; apply (in_map snd) in Hy; specialize (Hcp'1 _ Hy); contradiction.
-      apply (in_map fst) in Hy; cbn in Hy; tauto.
-    }
-
     destruct Hy as [Hy | Hy].
-    1: apply (in_map fst) in Hy; contradiction.
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
     pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
     rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''2.
     cbn in Hcp'6.
@@ -3754,7 +3768,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
 
     clear gamma_delta1 Hcp''2 Hdelta1'.
     clear gamma_delta1_x Hx.
-    clear delta1_y Hcp'3 Hy Hdelta1.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
 
     (* Cut P and Q *)
     intros Hz.
@@ -3779,6 +3793,649 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite <- Hcp'6.
     rewrite <- Permutation_middle.
     constructor; auto.
+  Qed.
+
+  Lemma proc_outleft_comm :
+  forall x t l p y q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_OutLeft y p) q) senv ->
+  cp (Proc_OutLeft y (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l p y q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_outleft _ _ _ Hcp'4) as (a & b & gamma_delta1_x & Hcp''1 & Hcp''2).
+    subst l.
+
+    assert (Hy : In (y, STyp_Plus a b) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''2; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''2.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''2.
+    rewrite perm_swap in Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''2; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''1, Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+    rewrite Hcp''2 in Hcp''1.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros w Hw; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    clear gamma_delta1 Hcp''2 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (y, a) :: delta1 ++ delta2)).
+    { rewrite (perm_swap (x, t)) in Hcp''1.
+      rewrite Permutation_middle in Hcp''1.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros w Hw.
+      cbn in Hw.
+      destruct Hw as [Hw | Hw]; try subst w; auto.
+    }
+
+    rewrite <- Permutation_middle in Hcp'.
+    eapply cp_plus_left in Hcp'.
+    rewrite Permutation_middle in Hcp'.
+    rewrite Hcp'6 in Hcp'.
+    auto.
+  Qed.
+
+  Lemma proc_outright_comm :
+  forall x t l p y q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_OutRight y p) q) senv ->
+  cp (Proc_OutRight y (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l p y q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_outright _ _ _ Hcp'4) as (a & b & gamma_delta1_x & Hcp''1 & Hcp''2).
+    subst l.
+
+    assert (Hy : In (y, STyp_Plus a b) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''2; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''2.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''2.
+    rewrite perm_swap in Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''2; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''1, Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+    rewrite Hcp''2 in Hcp''1.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros w Hw; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    clear gamma_delta1 Hcp''2 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (y, b) :: delta1 ++ delta2)).
+    { rewrite (perm_swap (x, t)) in Hcp''1.
+      rewrite Permutation_middle in Hcp''1.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros w Hw.
+      cbn in Hw.
+      destruct Hw as [Hw | Hw]; try subst w; auto.
+    }
+
+    rewrite <- Permutation_middle in Hcp'.
+    eapply cp_plus_right in Hcp'.
+    rewrite Permutation_middle in Hcp'.
+    rewrite Hcp'6 in Hcp'.
+    auto.
+  Qed.
+
+  Lemma proc_incase_comm :
+  forall x t l y p q r senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_InCase y p q) r) senv ->
+  cp (Proc_InCase y (Proc_CompAndSplit x t l p r) (Proc_CompAndSplit x t l q r)) senv.
+  Proof.
+    intros x t l y p q r senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_incase _ _ _ _ Hcp'4) as (a & b & gamma_delta1_x & Hcp''1 & Hcp''2 & Hcp''3).
+    subst l.
+
+    assert (Hy : In (y, STyp_With a b) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''3; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''3.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''3.
+    rewrite perm_swap in Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''3; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''1, Hcp''2, Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+    rewrite Hcp''3 in Hcp''1, Hcp''2.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros w Hw; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    clear gamma_delta1 Hcp''3 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p r) (gamma ++ (y, a) :: delta1 ++ delta2)).
+    { rewrite perm_swap in Hcp''1.
+      rewrite Permutation_middle in Hcp''1.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros w Hw.
+      cbn in Hw.
+      destruct Hw as [Hw | Hw]; try subst w; auto.
+    }
+
+    assert (Hcp'' : cp (Proc_CompAndSplit x t (map fst gamma) q r) (gamma ++ (y, b) :: delta1 ++ delta2)).
+    { rewrite perm_swap in Hcp''2.
+      rewrite Permutation_middle in Hcp''2.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros w Hw.
+      cbn in Hw.
+      destruct Hw as [Hw | Hw]; try subst w; auto.
+    }
+
+    rewrite <- Hcp'6.
+    rewrite <- Permutation_middle.
+    rewrite <- Permutation_middle in Hcp', Hcp''.
+    constructor; auto.
+  Qed.
+
+  Lemma proc_server_comm :
+  forall x t l y z p q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_Server y z p) q) senv ->
+  ~ In z (proc_channels q) ->
+  cp (Proc_Server y z (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l y z p q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_server _ _ _ _ Hcp'4) as (a & gamma_delta1_x & Hcp''1 & Hcp''2 & Hcp''3).
+    subst l.
+
+    assert (Hy : In (y, STyp_Excl a) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''3; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''3.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''3.
+    rewrite perm_swap in Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''3; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''2, Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+    rewrite Hcp''3 in Hcp''2.
+    rewrite Hdelta1', Hcp''3 in Hcp''1.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros w Hw; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    clear gamma_delta1 Hcp''3 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    intros Hz.
+    rewrite <- (proc_channels_perm _ _ Hcp'5) in Hz.
+    cbn in Hz.
+    rewrite map_app, in_app_iff in Hz.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (z, a) :: delta1 ++ delta2)).
+    { rewrite perm_swap in Hcp''2.
+      rewrite Permutation_middle in Hcp''2.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros w Hw.
+      cbn in Hw.
+      destruct Hw as [Hw | Hw]; try subst w; auto.
+    }
+
+    rewrite <- Hcp'6.
+    rewrite <- Permutation_middle.
+    rewrite <- Permutation_middle in Hcp'.
+
+    (* It turns out commutation for server is not so simple.
+       The server rule requires that all other channels of P are clients.
+       However, if P is cut with Q, Q may introduce channels which are not clients.
+       Therefore, further structural analysis on Q is required.
+
+       Since all channels of P other than y are clients, x must also be a client.
+       Therefore, channel x of Q must be a server.
+
+       If the principal constructor of Q is Proc_Server, then all channels other than the server channel must be clients.
+       Therefore, x is the server channel of Q, and we can do the commutation.
+
+       If the principal constructor of Q is not Proc_Server, can we do a commutation on the side of Q?
+       Things become difficult if a const process exports both a server channel and a non-client channel.
+     *)
+  Admitted.
+
+  Lemma proc_client_comm_1 :
+  forall x t l y z p q senv,
+  x <> y ->
+  ~ In y l ->
+  cp (Proc_CompAndSplit x t l (Proc_Client y z p) q) senv ->
+  cp (Proc_Client y z (Proc_CompAndSplit x t l p q)) senv.
+  Admitted.
+
+  Lemma proc_client_comm_2 :
+  forall x t l y z p q senv,
+  x <> y ->
+  In y l ->
+  ~ In z (proc_channels q) ->
+  cp (Proc_CompAndSplit x t l (Proc_Client y z p) q) senv ->
+  cp (Proc_ClientSplit y z (Proc_Client z z (Proc_CompAndSplit x t (filter (fun s => negb (eqb y s)) l) p q))) senv.
+  Admitted.
+
+  Lemma proc_client_null_comm_1 :
+  forall x t l y p q senv,
+  x <> y ->
+  ~ In y l ->
+  cp (Proc_CompAndSplit x t l (Proc_ClientNull y p) q) senv ->
+  cp (Proc_ClientNull y (Proc_CompAndSplit x t l p q)) senv.
+  Admitted.
+
+  Lemma proc_client_null_comm_2 :
+  forall x t l y p q senv,
+  x <> y ->
+  In y l ->
+  cp (Proc_CompAndSplit x t l (Proc_ClientNull y p) q) senv ->
+  cp (Proc_CompAndSplit x t (filter (fun s => negb (eqb y s)) l) p q) senv.
+  Admitted.
+
+  Lemma proc_client_split_comm :
+  forall x t l y z p q senv,
+  x <> y ->
+  ~ In z (proc_channels q) ->
+  cp (Proc_CompAndSplit x t l (Proc_ClientSplit y z p) q) senv ->
+  cp (Proc_ClientSplit y z (Proc_CompAndSplit x t l p q)) senv.
+  Admitted.
+
+  Lemma proc_client_outtyp_comm :
+  forall x t l y a w b p q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_OutTyp y a w b p) q) senv ->
+  cp (Proc_OutTyp y a w b (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l y a w b p q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp'4) as (gamma_delta1_x & Hcp''1 & Hcp''2 & Hcp''3).
+    subst l.
+
+    assert (Hy : In (y, STyp_Exists w b) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''3; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''3.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''3.
+    rewrite perm_swap in Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''3; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''2, Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+    rewrite Hcp''3 in Hcp''2.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros z Hz; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    clear gamma_delta1 Hcp''3 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (y, styp_subst w b a) :: delta1 ++ delta2)).
+    { rewrite perm_swap in Hcp''2.
+      rewrite Permutation_middle in Hcp''2.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros z Hz.
+      cbn in Hz.
+      destruct Hz as [Hz | Hz]; try subst z; auto.
+    }
+
+    rewrite <- Permutation_middle in Hcp'.
+    apply cp_exists in Hcp'; auto.
+    rewrite Permutation_middle in Hcp'.
+    rewrite Hcp'6 in Hcp'.
+    auto.
+  Qed.
+
+  (* Like server_comm above, this rule requires that Q does not introduce channels that contain w as a free variable.
+     However this restriction can be worked around using intyp_rename.
+   *)
+  Lemma proc_client_intyp_comm :
+  forall x t l y w a p q senv,
+  x <> y ->
+  Forall (fun r => fst r <> y -> ~ In w (fvar (snd r))) senv ->
+  cp (Proc_CompAndSplit x t l (Proc_InTyp y w a p) q) senv ->
+  cp (Proc_InTyp y w a (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l y w a p q senv Hneq Hfree Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_intyp _ _ _ _ _ Hcp'4) as (gamma_delta1_x & Hcp''1 & Hcp''2 & Hcp''3).
+    subst l.
+
+    assert (Hy : In (y, STyp_Forall w a) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''3; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''3.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''3.
+    rewrite perm_swap in Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''3; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''1, Hcp''2, Hcp''3.
+    apply Permutation_cons_inv in Hcp''3.
+    rewrite Hcp''3 in Hcp''1, Hcp''2.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros z Hz; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+    assert (Hy''' : ~ In y (map fst delta1)) by (rewrite perm_swap in Hcp''2; eauto with senv_valid).
+
+    clear gamma_delta1 Hcp''3 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    rewrite <- Hcp'6 in Hfree.
+    rewrite <- Permutation_middle in Hfree.
+    rewrite Forall_cons_iff in Hfree.
+    destruct Hfree as (_ & Hfree).
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (y, a) :: delta1 ++ delta2)).
+    { rewrite perm_swap in Hcp''2.
+      rewrite Permutation_middle in Hcp''2.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros z Hz.
+      cbn in Hz.
+      destruct Hz as [Hz | Hz]; try subst z; auto.
+    }
+
+    rewrite <- Permutation_middle in Hcp'.
+    rewrite <- Hcp'6.
+    rewrite <- Permutation_middle.
+    constructor; auto.
+    rewrite Forall_forall; rewrite Forall_forall in Hfree.
+    intros z Hz.
+    rewrite in_map_iff in Hz.
+    destruct Hz as (v & Hv1 & Hv2); subst z.
+    specialize (Hfree _ Hv2).
+    apply Hfree.
+    do 2 rewrite in_app_iff in Hv2; destruct Hv2 as [Hv2 | [Hv2 | Hv2]]; intros Heq; apply (in_map fst) in Hv2; rewrite Heq in Hv2; tauto.
+  Qed.
+
+  Lemma proc_client_intyp_rename_comm :
+  forall x t l y w w' p q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_InTypRename y w w' p) q) senv ->
+  cp (Proc_InTypRename y w w' (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l y w w' p q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_intyp_rename _ _ _ _ _ Hcp'4) as (a & gamma_delta1_x & Hcp''1 & Hcp''2 & Hcp''3 & Hcp''4).
+    subst l.
+
+    assert (Hy : In (y, STyp_Forall w' (styp_subst w a (STyp_Var w'))) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''4; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''4.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''4.
+    rewrite perm_swap in Hcp''4.
+    apply Permutation_cons_inv in Hcp''4.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''4; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''3, Hcp''4.
+    apply Permutation_cons_inv in Hcp''4.
+    rewrite Hcp''4 in Hcp''3.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros z Hz; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    clear gamma_delta1 Hcp''4 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (y, STyp_Forall w a) :: delta1 ++ delta2)).
+    { rewrite perm_swap in Hcp''3.
+      rewrite Permutation_middle in Hcp''3.
+      rewrite app_comm_cons.
+      constructor; auto.
+      intros z Hz.
+      cbn in Hz.
+      destruct Hz as [Hz | Hz]; try subst z; auto.
+    }
+
+    rewrite <- Permutation_middle in Hcp'.
+    eapply cp_forall_rename in Hcp'; auto.
+    2: apply Hcp''1.
+    2: apply Hcp''2.
+    rewrite <- Hcp'6.
+    rewrite <- Permutation_middle; auto.
+  Qed.
+
+  Lemma proc_client_inunit_comm :
+  forall x t l y p q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_InUnit y p) q) senv ->
+  cp (Proc_InUnit y (Proc_CompAndSplit x t l p q)) senv.
+  Proof.
+    intros x t l y p q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_inunit _ _ _ Hcp'4) as (gamma_delta1_x & Hcp''1 & Hcp''2).
+    subst l.
+
+    assert (Hy : In (y, STyp_Bot) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''2; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''2.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''2.
+    rewrite perm_swap in Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''2; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''1, Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+    rewrite Hcp''2 in Hcp''1.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros z Hz; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    assert (Hy''' : ~ In y (map fst delta1)) by eauto with senv_valid.
+
+    clear gamma_delta1 Hcp''2 Hdelta1'.
+    clear gamma_delta1_x Hx.
+    clear delta1_y Hcp'3 Hy Hdisjoint Hdelta1.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ delta1 ++ delta2)).
+    { constructor; auto. }
+
+    rewrite <- Permutation_middle in Hcp'6.
+    eapply cp_bot in Hcp'.
+    1: rewrite Hcp'6 in Hcp'; auto.
+    do 2 rewrite map_app, in_app_iff; tauto.
+  Qed.
+
+  Lemma proc_client_emptycase_comm :
+  forall x t l y l' q senv,
+  x <> y ->
+  cp (Proc_CompAndSplit x t l (Proc_EmptyCase y l') q) senv ->
+  cp (Proc_EmptyCase y ((filter (fun s => negb (eqb x s)) l') ++ filter (fun s => if in_dec eq_dec s l then false else true) (filter (fun s => negb (eqb x s)) (proc_channels q)))) senv.
+  Proof.
+    intros x t l y l' q senv Hneq Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1_y & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6).
+    destruct (cp_inv_emptycase _ _ _ Hcp'4) as (gamma_delta1_x & Hcp''1 & Hcp''2).
+    subst l l'.
+
+    assert (Hy : In (y, STyp_Top) ((x, t) :: gamma ++ delta1_y)) by (rewrite <- Hcp''2; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    1: injection Hy; intros; subst y; contradiction.
+    rewrite in_app_iff in Hy.
+
+    destruct Hy as [Hy | Hy].
+    1: apply (in_map snd) in Hy; rewrite Forall_forall in Hcp'1; specialize (Hcp'1 _ Hy); contradiction.
+    assert (Hdisjoint : senv_disjoint gamma delta1_y) by eauto with senv_valid senv_disjoint.
+    specialize (Hdisjoint y).
+    assert (Hy' : ~ In y (map fst gamma)) by (apply (in_map fst) in Hy; tauto).
+
+    pose proof (in_split_perm _ _ Hy) as (delta1 & Hdelta1).
+    rewrite Hdelta1 in Hcp'4, Hcp'6, Hcp''2.
+    cbn in Hcp'6.
+    rewrite <- Permutation_middle in Hcp''2.
+    rewrite perm_swap in Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+
+    assert (Hx : In (x, t) gamma_delta1_x) by (rewrite Hcp''2; left; auto).
+    pose proof (in_split_perm _ _ Hx) as (gamma_delta1 & Hdelta1').
+    rewrite Hdelta1' in Hcp''2.
+    apply Permutation_cons_inv in Hcp''2.
+
+    assert (Hy'' : ~ In y (map fst delta2)).
+    { apply (in_map fst) in Hy; apply (Hcp'3 y ltac:(auto)). }
+    assert (Hdelta1'' : senv_disjoint delta1 delta2).
+    { intros z Hz; apply Hcp'3; rewrite Hdelta1; cbn; auto. }
+
+    pose proof (proc_channels_filter_one_and_app _ _ _ _ _ Hcp'5) as Hq.
+
+    assert (Hx' : ~ In x (map fst gamma)) by eauto with senv_valid.
+    assert (Hx'' : ~ In x (map fst delta1)) by (rewrite Permutation_middle, perm_swap in Hcp'4; eauto with senv_valid).
+    assert (Hy''' : ~ In y (map fst delta1)) by eauto with senv_valid.
+
+    assert (Hp : Permutation (filter (fun s => negb (eqb x s)) (map fst gamma_delta1_x)) (map fst gamma ++ map fst delta1)).
+    { rewrite Hdelta1'.
+      cbn; rewrite eqb_refl; cbn.
+      rewrite Hcp''2; rewrite map_app, filter_app.
+      rewrite forallb_filter_id.
+      1: rewrite forallb_filter_id; auto.
+      all: rewrite forallb_forall; intros z Hz; rewrite chn_negb_eqb_true_iff.
+      all: intros Heq; subst z; tauto.
+    }
+
+    rewrite <- Hcp'6.
+    rewrite <- Permutation_middle.
+    rewrite Hp, Hq.
+    rewrite <- app_assoc.
+    do 2 rewrite <- map_app.
+    constructor.
+    - do 2 rewrite map_app, in_app_iff; tauto.
+    - rewrite <- Hcp'6 in Hcp; rewrite <- Permutation_middle in Hcp; eauto with senv_valid.
   Qed.
 
 End Wadler_Transformation.
