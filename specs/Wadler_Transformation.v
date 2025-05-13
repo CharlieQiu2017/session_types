@@ -589,6 +589,127 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     auto.
   Qed.
 
+  Lemma proc_ax_cut_1 :
+  forall x a l y q senv,
+  cp (Proc_CompAndSplit x a l (Proc_Link x y) q) senv ->
+  In y l /\ cp (Proc_ClientSplit y x q) senv \/ ~ In y l /\ (~ In y (proc_forbidden q x) -> cp (proc_rename q x y) senv).
+  Proof.
+    intros x a l y q senv Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp1 & Hcp2 & Hcp3 & Hcp4 & Hcp5 & Hcp6).
+    destruct (cp_inv_link _ _ _ Hcp4) as (a' & Hcp').
+    assert (Hx1 : ~ In x (map fst gamma)) by eauto with senv_valid.
+    assert (Hx2 : ~ In x (map fst delta1)) by (rewrite Permutation_middle in Hcp4; eauto with senv_valid).
+    assert (Hx3 : ~ In x (map fst delta2)) by (rewrite Permutation_middle in Hcp5; eauto with senv_valid).
+    assert (Hx : In (x, dual a') ((x, a) :: gamma ++ delta1)) by (rewrite <- Hcp'; left; auto).
+    cbn in Hx.
+    destruct Hx as [Hx | Hx].
+    2: rewrite in_app_iff in Hx; destruct Hx as [Hx | Hx]; apply (in_map fst) in Hx; tauto.
+    injection Hx; intros ?; subst a; clear Hx.
+    rewrite dual_involute in Hcp5.
+    apply Permutation_cons_inv in Hcp'.
+
+    assert (Hlen : length [(y, a')] = length (gamma ++ delta1)) by (rewrite Hcp'; auto).
+    rewrite length_app in Hlen; cbn in Hlen.
+
+    assert (Hy : In (y, a') (gamma ++ delta1)) by (rewrite <- Hcp'; left; auto).
+    rewrite in_app_iff in Hy.
+    destruct Hy as [Hy | Hy].
+    - left.
+      destruct gamma eqn:Egamma1; [tauto|].
+      destruct l0; [|cbn in Hlen; discriminate].
+      cbn in Hlen; destruct delta1 eqn:Edelta1; try discriminate; clear Hlen.
+      subst gamma delta1 l; cbn in Hy.
+      destruct Hy; [subst p | tauto].
+      rewrite <- Hcp6; cbn.
+      split; auto.
+      cbn in Hcp5.
+      rewrite perm_swap in Hcp5.
+      cbn in Hcp1; rewrite Forall_cons_iff in Hcp1; destruct Hcp1 as (Hcp1 & _); destruct a'; try contradiction.
+      apply cp_contract in Hcp5.
+      auto.
+
+    - right.
+      rewrite PeanoNat.Nat.add_comm in Hlen.
+      destruct delta1 eqn:Edelta1; [tauto|].
+      destruct s; [|cbn in Hlen; discriminate].
+      cbn in Hlen; destruct gamma eqn:Egamma; try discriminate; clear Hlen.
+      subst gamma delta1 l; cbn in Hy.
+      destruct Hy; [subst p | tauto].
+      rewrite <- Hcp6; cbn.
+      split; auto.
+      cbn in Hcp5.
+      intros Hallow.
+      pose proof (cp_proc_rename q x y _ Hcp5 Hallow) as Hrename.
+      cbn in Hrename.
+      rewrite eqb_refl in Hrename.
+      fold (senv_rename delta2 x y) in Hrename.
+      rewrite senv_rename_nin in Hrename.
+      2: auto.
+      destruct Hrename as [(_ & Hrename) | (? & _)]; [|tauto].
+      auto.
+  Qed.
+
+  Lemma proc_ax_cut_2 :
+  forall x a l y q senv,
+  cp (Proc_CompAndSplit y a l (Proc_Link x y) q) senv ->
+  In x l /\ cp (Proc_ClientSplit x y q) senv \/ ~ In x l /\ (~ In x (proc_forbidden q y) -> cp (proc_rename q y x) senv).
+  Proof.
+    intros x a l y q senv Hcp.
+    destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp1 & Hcp2 & Hcp3 & Hcp4 & Hcp5 & Hcp6).
+    destruct (cp_inv_link _ _ _ Hcp4) as (a' & Hcp').
+    assert (Hy1 : ~ In y (map fst gamma)) by eauto with senv_valid.
+    assert (Hy2 : ~ In y (map fst delta1)) by (rewrite Permutation_middle in Hcp4; eauto with senv_valid).
+    assert (Hy3 : ~ In y (map fst delta2)) by (rewrite Permutation_middle in Hcp5; eauto with senv_valid).
+    assert (Hy : In (y, a') ((y, a) :: gamma ++ delta1)) by (rewrite <- Hcp'; right; left; auto).
+    cbn in Hy.
+    destruct Hy as [Hy | Hy].
+    2: rewrite in_app_iff in Hy; destruct Hy as [Hy | Hy]; apply (in_map fst) in Hy; tauto.
+    injection Hy; intros ?; subst a'; clear Hy.
+    rewrite perm_swap in Hcp'.
+    apply Permutation_cons_inv in Hcp'.
+
+    assert (Hlen : length [(x, dual a)] = length (gamma ++ delta1)) by (rewrite Hcp'; auto).
+    rewrite length_app in Hlen; cbn in Hlen.
+
+    assert (Hx : In (x, dual a) (gamma ++ delta1)) by (rewrite <- Hcp'; left; auto).
+    rewrite in_app_iff in Hx.
+    destruct Hx as [Hx | Hx].
+    - left.
+      destruct gamma eqn:Egamma1; [tauto|].
+      destruct l0; [|cbn in Hlen; discriminate].
+      cbn in Hlen; destruct delta1 eqn:Edelta1; try discriminate; clear Hlen.
+      subst gamma delta1 l; cbn in Hx.
+      destruct Hx; [subst p | tauto].
+      rewrite <- Hcp6; cbn.
+      split; auto.
+      cbn in Hcp5.
+      rewrite perm_swap in Hcp5.
+      cbn in Hcp1; rewrite Forall_cons_iff in Hcp1; destruct Hcp1 as (Hcp1 & _); destruct a; try contradiction.
+      cbn in Hcp5.
+      apply cp_contract in Hcp5.
+      auto.
+
+    - right.
+      rewrite PeanoNat.Nat.add_comm in Hlen.
+      destruct delta1 eqn:Edelta1; [tauto|].
+      destruct s; [|cbn in Hlen; discriminate].
+      cbn in Hlen; destruct gamma eqn:Egamma; try discriminate; clear Hlen.
+      subst gamma delta1 l; cbn in Hx.
+      destruct Hx; [subst p | tauto].
+      rewrite <- Hcp6; cbn.
+      split; auto.
+      cbn in Hcp5.
+      intros Hallow.
+      pose proof (cp_proc_rename q y x _ Hcp5 Hallow) as Hrename.
+      cbn in Hrename.
+      rewrite eqb_refl in Hrename.
+      fold (senv_rename delta2 y x) in Hrename.
+      rewrite senv_rename_nin in Hrename.
+      2: auto.
+      destruct Hrename as [(_ & Hrename) | (? & _)]; [|tauto].
+      auto.
+  Qed.
+
   Section Contraction_Redistr.
 
   (* When proving structural equivalence of proofs, one frequently encounters the situation where
