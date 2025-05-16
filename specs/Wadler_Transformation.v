@@ -557,6 +557,178 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     all: rewrite <- HL'1; rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
   Qed.
 
+  #[export] Instance cp_cut_contract_proper :
+  Proper (Logic.eq ==> Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv ==> proc_equiv) (fun x a l p q => Proc_CompAndSplit x a l p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros a a' Heq; subst a'.
+    intros l l' Heq; subst l'.
+    intros p p' Hequiv1.
+    intros q q' Hequiv2.
+    unfold proc_equiv in Hequiv1, Hequiv2.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6); subst l.
+      rewrite Hequiv1 in Hcp'4.
+      rewrite Hequiv2 in Hcp'5.
+      rewrite <- Hcp'6.
+      constructor; auto.
+    - destruct (cp_inv_comp_and_split _ _ _ _ _ _ Hcp) as (gamma & delta1 & delta2 & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6); subst l.
+      rewrite <- Hequiv1 in Hcp'4.
+      rewrite <- Hequiv2 in Hcp'5.
+      rewrite <- Hcp'6.
+      constructor; auto.
+  Qed.
+
+  #[export] Instance cp_cut_proper :
+  Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv ==> proc_equiv) (fun x a p q => Proc_Comp x a p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros a a' Heq; subst a'.
+    intros p p' Hequiv1.
+    intros q q' Hequiv2.
+    intros senv.
+    do 2 rewrite <- proc_comp_and_split_empty.
+    apply cp_cut_contract_proper; auto.
+  Qed.
+
+  #[export] Instance cp_times_contract_proper :
+  Proper (Logic.eq ==> Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv ==> proc_equiv) (fun x y l p q => Proc_OutChAndSplit x y l p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros l l' Heq; subst l'.
+    intros p p' Hequiv1.
+    intros q q' Hequiv2.
+    unfold proc_equiv in Hequiv1, Hequiv2.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_outch_and_split _ _ _ _ _ _ Hcp) as (a & b & gamma & delta & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6 & Hcp'7 & Hcp'8); subst l.
+      rewrite Hequiv1 in Hcp'6.
+      rewrite Hequiv2 in Hcp'7.
+      rewrite <- Hcp'8.
+      constructor; auto.
+    - destruct (cp_inv_outch_and_split _ _ _ _ _ _ Hcp) as (a & b & gamma & delta & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4 & Hcp'5 & Hcp'6 & Hcp'7 & Hcp'8); subst l.
+      rewrite <- Hequiv1 in Hcp'6.
+      rewrite <- Hequiv2 in Hcp'7.
+      rewrite <- Hcp'8.
+      constructor; auto.
+  Qed.
+
+  #[export] Instance cp_times_proper :
+  Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv ==> proc_equiv) (fun x y p q => Proc_OutCh x y p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros p p' Hequiv1.
+    intros q q' Hequiv2.
+    intros senv.
+    do 2 rewrite <- proc_outch_and_split_empty.
+    apply cp_times_contract_proper; auto.
+  Qed.
+
+  #[export] Instance cp_inch_proper :
+  Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_InCh x y p).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_inch _ _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+    - destruct (cp_inv_inch _ _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+  Qed.
+
+  #[export] Instance cp_outleft_proper :
+  Proper (Logic.eq ==> proc_equiv ==> proc_equiv) (fun x p => Proc_OutLeft x p).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_outleft _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+    - destruct (cp_inv_outleft _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+  Qed.
+
+  #[export] Instance cp_outright_proper :
+  Proper (Logic.eq ==> proc_equiv ==> proc_equiv) (fun x p => Proc_OutRight x p).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_outright _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+    - destruct (cp_inv_outright _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+  Qed.
+
+  #[export] Instance cp_with_proper :
+  Proper (Logic.eq ==> proc_equiv ==> proc_equiv ==> proc_equiv) (fun x p q => Proc_InCase x p q).
+  Proof.
+    intros x x' Heq; subst x'.
+    intros p p' Hequiv1.
+    intros q q' Hequiv2.
+    unfold proc_equiv in Hequiv1, Hequiv2.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_incase _ _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite Hequiv1 in Hcp'1.
+      rewrite Hequiv2 in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+    - destruct (cp_inv_incase _ _ _ _ Hcp) as (a & b & gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite <- Hequiv1 in Hcp'1.
+      rewrite <- Hequiv2 in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+  Qed.
+
+  #[export] Instance cp_excl_proper :
+  Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_Server x y p).
+  Admitted.
+
+  #[export] Instance cp_ques_proper :
+  Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_Client x y p).
+  Admitted.
+
+  #[export] Instance cp_weaken_proper :
+  Proper (Logic.eq ==> proc_equiv ==> proc_equiv) (fun x p => Proc_ClientNull x p).
+  Admitted.
+
+  #[export] Instance cp_contract_proper :
+  Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_ClientSplit x y p).
+  Admitted.
+
+  #[export] Instance cp_exists_proper :
+  Proper (Logic.eq ==> Logic.eq ==> Logic.eq  ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x a v b p => Proc_OutTyp x a v b p).
+  Admitted.
+
+  #[export] Instance cp_forall_proper :
+  Proper (Logic.eq ==> Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x v a p => Proc_InTyp x v a p).
+  Admitted.
+
+  #[export] Instance cp_forall_rename_proper :
+  Proper (Logic.eq ==> Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x v v' p => Proc_InTypRename x v v' p).
+  Admitted.
+
+  #[export] Instance cp_bot_proper :
+  Proper (Logic.eq ==> proc_equiv ==> proc_equiv) (fun x p => Proc_InUnit x p).
+  Admitted.
+
   Lemma proc_swap' :
   forall x a l p q senv,
   cp (Proc_CompAndSplit x a l p q) senv ->
@@ -588,6 +760,11 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite dual_involute in Hcp.
     auto.
   Qed.
+
+  Lemma proc_swap_equiv :
+  forall x a l p q,
+  proc_equiv (Proc_CompAndSplit x a l p q) (Proc_CompAndSplit x (dual a) l q p).
+  Proof. intros x a l p q senv; apply proc_swap. Qed.
 
   Lemma proc_ax_cut_1 :
   forall x a l y q senv,
@@ -2421,20 +2598,9 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
       auto.
     }
 
-    remember (filter (fun s => negb (eqb x s)) (proc_channels p)) as l.
-    rewrite Heqp in Heql.
-    pose proof (proc_channels_perm _ _ Hcp'4) as Hl1.
-    pose proof (Permutation_refl l) as Hl2.
-    rewrite Heql in Hl2 at 1.
-    rewrite <- Hl1 in Hl2.
-    cbn [map fst] in Hl2.
-    rewrite NoDup_filter_one in Hl2.
-    2: apply eqb_spec.
-    2: apply cp_senv_valid in Hcp'4; auto.
-    pose proof (map_permutation_ex _ _ _ Hl2) as (L & HL1 & HL2).
-    rewrite HL2 in Heql; subst l; clear Hl2.
+    pose proof Hcp'4 as Hp; rewrite <- Heqp in Hp; cbn.
+    rewrite (proc_channels_filter_one _ _ _ _ Hp); clear Hp.
 
-    cbn.
     rewrite perm_swap in Hcp'''1.
     rewrite Hcp'''2 in Hcp'''1.
     rewrite Permutation_middle in Hcp'''1.
@@ -2458,17 +2624,14 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
 
     rewrite <- Hcp'6.
     rewrite app_assoc.
-    rewrite HL1.
     rewrite app_assoc in Hnew_cp.
     rewrite Permutation_app_comm in Hnew_cp.
     cbn in Hnew_cp.
     rewrite Permutation_app_comm in Hnew_cp.
-    rewrite HL1 in Hnew_cp.
-    rewrite HL1 in Hcp'4.
     replace delta2 with ([] ++ delta2) by auto.
 
     constructor; auto.
-    - rewrite <- HL1, <- Hcp''3; auto.
+    - rewrite <- Hcp''3; auto.
     - unfold senv_disjoint; intros; auto.
     - rewrite Heqp, app_nil_r; auto.
   Qed.
@@ -4331,12 +4494,12 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite <- Permutation_middle in Hz2; cbn in Hz2.
     rewrite map_app, in_app_iff in Hz2.
 
-    assert (Hcp' : cp (Proc_CompAndSplit x t (filter (fun s => negb (eqb y s)) (map fst gamma_y)) p q) (gamma ++ (z, a) :: delta1 ++ (y, STyp_Ques a) :: delta2)).
-    { rewrite Hgamma; cbn.
-      rewrite eqb_refl; cbn.
-      rewrite forallb_filter_id.
-      2: rewrite forallb_forall; intros w Hw; rewrite chn_negb_eqb_true_iff; intros Heq; subst w; tauto.
-      rewrite app_comm_cons.
+    rewrite Hgamma; cbn; rewrite eqb_refl; cbn.
+    rewrite forallb_filter_id.
+    2: rewrite forallb_forall; intros w Hw; rewrite chn_negb_eqb_true_iff; intros Heq; subst w; tauto.
+
+    assert (Hcp' : cp (Proc_CompAndSplit x t (map fst gamma) p q) (gamma ++ (z, a) :: delta1 ++ (y, STyp_Ques a) :: delta2)).
+    { rewrite app_comm_cons.
       constructor; auto.
       1: rewrite Forall_cons_iff in Hcp'1; apply Hcp'1.
       unfold senv_disjoint; cbn; intros w Hw.
@@ -4626,7 +4789,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite <- Hcp'6; auto.
   Qed.
 
-  Lemma proc_client_outtyp_comm :
+  Lemma proc_outtyp_comm :
   forall x t l y a w b p q senv,
   x <> y ->
   cp (Proc_CompAndSplit x t l (Proc_OutTyp y a w b p) q) senv ->
@@ -4691,7 +4854,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
   (* Like server_comm above, this rule requires that Q does not introduce channels that contain w as a free variable.
      However this restriction can be worked around using intyp_rename.
    *)
-  Lemma proc_client_intyp_comm :
+  Lemma proc_intyp_comm :
   forall x t l y w a p q senv,
   x <> y ->
   Forall (fun r => fst r <> y -> ~ In w (fvar (snd r))) senv ->
@@ -4766,7 +4929,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     do 2 rewrite in_app_iff in Hv2; destruct Hv2 as [Hv2 | [Hv2 | Hv2]]; intros Heq; apply (in_map fst) in Hv2; rewrite Heq in Hv2; tauto.
   Qed.
 
-  Lemma proc_client_intyp_rename_comm :
+  Lemma proc_intyp_rename_comm :
   forall x t l y w w' p q senv,
   x <> y ->
   cp (Proc_CompAndSplit x t l (Proc_InTypRename y w w' p) q) senv ->
@@ -4829,7 +4992,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     rewrite <- Permutation_middle; auto.
   Qed.
 
-  Lemma proc_client_inunit_comm :
+  Lemma proc_inunit_comm :
   forall x t l y p q senv,
   x <> y ->
   cp (Proc_CompAndSplit x t l (Proc_InUnit y p) q) senv ->
@@ -4885,7 +5048,7 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
     do 2 rewrite map_app, in_app_iff; tauto.
   Qed.
 
-  Lemma proc_client_emptycase_comm :
+  Lemma proc_emptycase_comm :
   forall x t l y l' q senv,
   x <> y ->
   cp (Proc_CompAndSplit x t l (Proc_EmptyCase y l') q) senv ->
