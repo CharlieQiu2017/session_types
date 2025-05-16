@@ -699,35 +699,157 @@ Module Type Wadler_Transformation (PropVarName : UsualDecidableType) (ChannelNam
 
   #[export] Instance cp_excl_proper :
   Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_Server x y p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_server _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite Hequiv in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+      rewrite <- Hcp'3 in Hcp; eauto with senv_valid.
+    - destruct (cp_inv_server _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite <- Hequiv in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+      rewrite <- Hcp'3 in Hcp; eauto with senv_valid.
+  Qed.
 
   #[export] Instance cp_ques_proper :
   Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_Client x y p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_client _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+      rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
+    - destruct (cp_inv_client _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+      rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
+  Qed.
 
   #[export] Instance cp_weaken_proper :
   Proper (Logic.eq ==> proc_equiv ==> proc_equiv) (fun x p => Proc_ClientNull x p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_client_null _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+      rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
+    - destruct (cp_inv_client_null _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+      rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
+  Qed.
 
   #[export] Instance cp_contract_proper :
   Proper (Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x y p => Proc_ClientSplit x y p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros y y' Heq; subst y'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_client_split _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+    - destruct (cp_inv_client_split _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+  Qed.
 
   #[export] Instance cp_exists_proper :
   Proper (Logic.eq ==> Logic.eq ==> Logic.eq  ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x a v b p => Proc_OutTyp x a v b p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros a a' Heq; subst a'.
+    intros v v' Heq; subst v'.
+    intros b b' Heq; subst b'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite Hequiv in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+    - destruct (cp_inv_outtyp _ _ _ _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite <- Hequiv in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+  Qed.
 
   #[export] Instance cp_forall_proper :
   Proper (Logic.eq ==> Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x v a p => Proc_InTyp x v a p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros v v' Heq; subst v'.
+    intros a a' Heq; subst a'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_intyp _ _ _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite Hequiv in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+    - destruct (cp_inv_intyp _ _ _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2 & Hcp'3).
+      rewrite <- Hequiv in Hcp'2.
+      rewrite <- Hcp'3.
+      constructor; auto.
+  Qed.
 
   #[export] Instance cp_forall_rename_proper :
   Proper (Logic.eq ==> Logic.eq ==> Logic.eq ==> proc_equiv ==> proc_equiv) (fun x v v' p => Proc_InTypRename x v v' p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros v v' Heq; subst v'.
+    intros v' v'' Heq; subst v''.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_intyp_rename _ _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
+      rewrite Hequiv in Hcp'3.
+      rewrite <- Hcp'4.
+      constructor; auto.
+    - destruct (cp_inv_intyp_rename _ _ _ _ _ Hcp) as (a & gamma & Hcp'1 & Hcp'2 & Hcp'3 & Hcp'4).
+      rewrite <- Hequiv in Hcp'3.
+      rewrite <- Hcp'4.
+      constructor; auto.
+  Qed.
 
   #[export] Instance cp_bot_proper :
   Proper (Logic.eq ==> proc_equiv ==> proc_equiv) (fun x p => Proc_InUnit x p).
-  Admitted.
+  Proof.
+    intros x x' Heq; subst x'.
+    intros p p' Hequiv.
+    unfold proc_equiv in Hequiv.
+    intros senv; split; intros Hcp.
+    - destruct (cp_inv_inunit _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2).
+      rewrite Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+      rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
+    - destruct (cp_inv_inunit _ _ _ Hcp) as (gamma & Hcp'1 & Hcp'2).
+      rewrite <- Hequiv in Hcp'1.
+      rewrite <- Hcp'2.
+      constructor; auto.
+      rewrite <- Hcp'2 in Hcp; eauto with senv_valid.
+  Qed.
 
   Lemma proc_swap' :
   forall x a l p q senv,
