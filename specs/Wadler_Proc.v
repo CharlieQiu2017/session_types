@@ -497,6 +497,33 @@ Module Type Wadler_SEnv (PropVarName : UsualDecidableType) (ChannelName : UsualD
            rewrite IHn; auto.
   Qed.
 
+  Fixpoint find_in_senv (s : chn) (senv : SEnv) :=
+  match senv with
+  | [] => STyp_Zero
+  | (x, t) :: xs => if eqb x s then t else find_in_senv s xs
+  end.
+
+  Lemma find_in_senv_correct s t senv :
+  senv_valid senv ->
+  In (s, t) senv ->
+  find_in_senv s senv = t.
+  Proof.
+    induction senv.
+    - cbn; tauto.
+    - intros Hval.
+      rewrite senv_valid_cons in Hval.
+      destruct Hval as (Hval1 & Hval2).
+      specialize (IHsenv Hval2).
+      intros Hin.
+      cbn in Hin.
+      destruct Hin as [Hin | Hin].
+      + subst a; cbn; rewrite eqb_refl; auto.
+      + cbn; destruct a; cbn in Hval1.
+        destruct (eqb_spec t0 s).
+        1: subst t0; apply (in_map fst) in Hin; tauto.
+        auto.
+  Qed.
+
 End Wadler_SEnv.
 
 Module Wadler_SEnv_M (PropVarName : UsualDecidableType) (ChannelName : UsualDecidableType) (WT : Wadler_Types PropVarName).
@@ -544,59 +571,59 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
      We thus had to add ClientNull and ClientSplit to explicitly keep track of channel names that are added and deleted.
    *)
   Inductive Process :=
-  | Proc_Const (n : pcn) (l : list chn)
-  | Proc_Link (x : chn) (y : chn)
+  | Proc_Const (n : pcn) (l : SEnv)
+  | Proc_Link (x : chn) (y : chn) (a : STyp)
   | Proc_Comp (x : chn) (a : STyp) (p : Process) (q : Process)
   | Proc_OutCh (x : chn) (y : chn) (p : Process) (q : Process)
   | Proc_OutChAndSplit (x : chn) (y : chn) (l : list chn) (p : Process) (q : Process)
   | Proc_InCh (x : chn) (y : chn) (p : Process)
-  | Proc_OutLeft (x : chn) (p : Process)
-  | Proc_OutRight (x : chn) (p : Process)
+  | Proc_OutLeft (x : chn) (b : STyp) (p : Process)
+  | Proc_OutRight (x : chn) (a : STyp) (p : Process)
   | Proc_InCase (x : chn) (p : Process) (q : Process)
   | Proc_Server (x : chn) (y : chn) (p : Process)
   | Proc_Client (x : chn) (y : chn) (p : Process)
-  | Proc_ClientNull (x : chn) (p : Process)
+  | Proc_ClientNull (x : chn) (t : STyp) (p : Process)
   | Proc_ClientSplit (x : chn) (y : chn) (p : Process)
   | Proc_CompAndSplit (x : chn) (a : STyp) (l : list chn) (p : Process) (q : Process)
   | Proc_OutTyp (x : chn) (a : STyp) (v : pvn) (t : STyp) (p : Process)
-  | Proc_InTyp (x : chn) (v : pvn) (t : STyp) (p : Process)
+  | Proc_InTyp (x : chn) (v : pvn) (p : Process)
   | Proc_InTypRename (x : chn) (v : pvn) (v' : pvn) (p : Process)
   | Proc_OutUnit (x : chn)
   | Proc_InUnit (x : chn) (p : Process)
-  | Proc_EmptyCase (x : chn) (l : list chn).
+  | Proc_EmptyCase (x : chn) (l : SEnv).
 
   (* List of names of channels provided by a process *)
   Fixpoint proc_channels (p : Process) :=
   match p with
-  | Proc_Const _ l => l
-  | Proc_Link x y => [x; y]
-  | Proc_Comp x a p q => filter (fun s => negb (eqb x s)) ((proc_channels p) ++ (proc_channels q))
-  | Proc_OutCh x y p q => filter (fun s => negb (eqb y s)) (proc_channels p) ++ (proc_channels q)
-  | Proc_OutChAndSplit x y l p q => l ++ filter (fun s => negb (eqb y s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p)) ++ filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels q)
-  | Proc_InCh x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
-  | Proc_OutLeft x p => proc_channels p
-  | Proc_OutRight x p => proc_channels p
-  | Proc_InCase x p q => proc_channels p
+  | Proc_Const _ l => (map fst l)
+  | Proc_Link x y _ => [x; y]
+  | Proc_Comp x _ p q => filter (fun s => negb (eqb x s)) ((proc_channels p) ++ (proc_channels q))
+  | Proc_OutCh _ y p q => filter (fun s => negb (eqb y s)) (proc_channels p) ++ (proc_channels q)
+  | Proc_OutChAndSplit _ y l p q => l ++ filter (fun s => negb (eqb y s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p)) ++ filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels q)
+  | Proc_InCh _ y p => filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_OutLeft _ _ p => proc_channels p
+  | Proc_OutRight _ _ p => proc_channels p
+  | Proc_InCase _ p _ => proc_channels p
   | Proc_Server x y p => x :: filter (fun s => negb (eqb y s)) (proc_channels p)
   | Proc_Client x y p => x :: filter (fun s => negb (eqb y s)) (proc_channels p)
-  | Proc_ClientNull x p => x :: (proc_channels p)
-  | Proc_ClientSplit x y p => filter (fun s => negb (eqb y s)) (proc_channels p)
-  | Proc_CompAndSplit x a l p q => l ++ filter (fun s => negb (eqb x s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p ++ proc_channels q))
-  | Proc_OutTyp x a _ _ p => proc_channels p
-  | Proc_InTyp x v t p => proc_channels p
-  | Proc_InTypRename x v v' p => proc_channels p
+  | Proc_ClientNull x _ p => x :: (proc_channels p)
+  | Proc_ClientSplit _ y p => filter (fun s => negb (eqb y s)) (proc_channels p)
+  | Proc_CompAndSplit x _ l p q => l ++ filter (fun s => negb (eqb x s)) (filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p ++ proc_channels q))
+  | Proc_OutTyp _ _ _ _ p => proc_channels p
+  | Proc_InTyp _ _ p => proc_channels p
+  | Proc_InTypRename _ _ _ p => proc_channels p
   | Proc_OutUnit x => [x]
   | Proc_InUnit x p => x :: proc_channels p
-  | Proc_EmptyCase x l => x :: l
+  | Proc_EmptyCase x l => x :: (map fst l)
   end.
 
   (* If s is the name of a channel provided by process p, returns the list of names that s must not be renamed into *)
   (* Otherwise, return [] *)
   Fixpoint proc_forbidden (p : Process) (s : chn) :=
   match p with
-  | Proc_Const _ l => if in_dec eq_dec s l then l else []
-  | Proc_Link x y => if eqb x s then [y] else if eqb y s then [x] else []
-  | Proc_Comp x a p q =>
+  | Proc_Const _ l => if in_dec eq_dec s (map fst l) then (map fst l) else []
+  | Proc_Link x y _ => if eqb x s then [y] else if eqb y s then [x] else []
+  | Proc_Comp x _ p q =>
       let gamma := filter (fun s => negb (eqb x s)) (proc_channels p) in
       let delta := filter (fun s => negb (eqb x s)) (proc_channels q) in
       if eqb x s then [] else if in_dec eq_dec s gamma then (proc_forbidden p s) ++ delta else if in_dec eq_dec s delta then (proc_forbidden q s) ++ gamma else []
@@ -608,41 +635,41 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       let delta1 := filter (fun s => if in_dec eq_dec s l then false else true) (filter (fun s => negb (eqb y s)) (proc_channels p)) in
       let delta2 := filter (fun s => if in_dec eq_dec s l then false else true) (filter (fun s => negb (eqb x s)) (proc_channels q)) in
       if eqb x s then l ++ delta1 ++ (proc_forbidden q s) else if in_dec eq_dec s l then (proc_forbidden p s) ++ (proc_forbidden q s) else if in_dec eq_dec s delta1 then x :: l ++ delta2 ++ (proc_forbidden p s) else if in_dec eq_dec s delta2 then l ++ delta1 ++ (proc_forbidden q s) else []
-  | Proc_InCh x y p => if eqb y s then [] else proc_forbidden p s
-  | Proc_OutLeft x p => proc_forbidden p s
-  | Proc_OutRight x p => proc_forbidden p s
-  | Proc_InCase x p q => proc_forbidden p s ++ proc_forbidden q s
+  | Proc_InCh _ y p => if eqb y s then [] else proc_forbidden p s
+  | Proc_OutLeft _ _ p => proc_forbidden p s
+  | Proc_OutRight _ _ p => proc_forbidden p s
+  | Proc_InCase _ p q => proc_forbidden p s ++ proc_forbidden q s
   | Proc_Server x y p =>
       let gamma := filter (fun s => negb (eqb y s)) (proc_channels p) in
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
   | Proc_Client x y p =>
       let gamma := filter (fun s => negb (eqb y s)) (proc_channels p) in
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
-  | Proc_ClientNull x p =>
+  | Proc_ClientNull x _ p =>
       let gamma := proc_channels p in
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
-  | Proc_ClientSplit x y p => if eqb y s then [] else proc_forbidden p s
-  | Proc_CompAndSplit x a l p q =>
+  | Proc_ClientSplit _ y p => if eqb y s then [] else proc_forbidden p s
+  | Proc_CompAndSplit x _ l p q =>
       let delta1 := filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels p) in
       let delta2 := filter (fun s => if in_dec eq_dec s l then false else true) (proc_channels q) in
       if eqb x s then [] else if in_dec eq_dec s l then (proc_forbidden p s) ++ (proc_forbidden q s) else if in_dec eq_dec s delta1 then (proc_forbidden p s) ++ delta2 else if in_dec eq_dec s delta2 then delta1 ++ (proc_forbidden q s) else []
-  | Proc_OutTyp x a _ _ p => proc_forbidden p s
-  | Proc_InTyp x v _ p => proc_forbidden p s
-  | Proc_InTypRename x v v' p => proc_forbidden p s
-  | Proc_OutUnit x => []
+  | Proc_OutTyp _ _ _ _ p => proc_forbidden p s
+  | Proc_InTyp _ _ p => proc_forbidden p s
+  | Proc_InTypRename _ _ _ p => proc_forbidden p s
+  | Proc_OutUnit _ => []
   | Proc_InUnit x p =>
       let gamma := proc_channels p in
       if eqb x s then gamma else if in_dec eq_dec s gamma then x :: proc_forbidden p s else []
   | Proc_EmptyCase x l =>
-      if in_dec eq_dec s (x :: l) then (x :: l) else []
+      if in_dec eq_dec s (x :: (map fst l)) then (x :: (map fst l)) else []
   end.
 
   Inductive cp : Process -> SEnv -> Prop :=
   | cp_const :
     forall c l l',
-      NoDup l -> pcn_sig c l' -> length l = length l' -> cp (Proc_Const c l) (combine l l')
+      NoDup l -> pcn_sig c l' -> length l = length l' -> cp (Proc_Const c (combine l l')) (combine l l')
   | cp_ax :
-    forall w x a, ~ x = w -> cp (Proc_Link w x) [(w, dual a); (x, a)]
+    forall w x a, ~ x = w -> cp (Proc_Link w x a) [(w, dual a); (x, a)]
   | cp_cut :
     forall x a p q gamma delta,
       senv_disjoint gamma delta ->
@@ -671,11 +698,11 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   | cp_plus_left :
     forall x a b p gamma,
       cp p ((x, a) :: gamma) ->
-      cp (Proc_OutLeft x p) ((x, STyp_Plus a b) :: gamma)
+      cp (Proc_OutLeft x b p) ((x, STyp_Plus a b) :: gamma)
   | cp_plus_right :
     forall x a b p gamma,
       cp p ((x, b) :: gamma) ->
-      cp (Proc_OutRight x p) ((x, STyp_Plus a b) :: gamma)
+      cp (Proc_OutRight x a p) ((x, STyp_Plus a b) :: gamma)
   | cp_with :
     forall x a b p q gamma,
       cp p ((x, a) :: gamma) ->
@@ -696,7 +723,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     forall x a p gamma,
       ~ In x (map fst gamma) ->
       cp p gamma ->
-      cp (Proc_ClientNull x p) ((x, STyp_Ques a) :: gamma)
+      cp (Proc_ClientNull x a p) ((x, STyp_Ques a) :: gamma)
   | cp_contract :
     forall x y a p gamma,
       cp p ((x, STyp_Ques a) :: (y, STyp_Ques a) :: gamma) ->
@@ -717,7 +744,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     forall x v a p gamma,
       Forall (fun r => ~ In v (fvar r)) (map snd gamma) ->
       cp p ((x, a) :: gamma) ->
-      cp (Proc_InTyp x v a p) ((x, STyp_Forall v a) :: gamma)
+      cp (Proc_InTyp x v p) ((x, STyp_Forall v a) :: gamma)
   | cp_forall_rename :
     forall x v v' a p gamma,
       ~ In v' (styp_forbidden a v) ->
@@ -734,7 +761,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     forall x gamma,
       ~ In x (map fst gamma) ->
       senv_valid gamma ->
-      cp (Proc_EmptyCase x (map fst gamma)) ((x, STyp_Top) :: gamma)
+      cp (Proc_EmptyCase x gamma) ((x, STyp_Top) :: gamma)
   | cp_perm :
     forall p gamma gamma',
       cp p gamma ->
@@ -788,7 +815,6 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     intros p senv Hcp.
     induction Hcp.
     all: cbn; auto.
-    1: rewrite combine_map_fst; auto.
     all: try rewrite map_app; try rewrite filter_app.
     all: try rewrite <- IHHcp1, <- IHHcp2; try rewrite <- IHHcp; cbn.
     all: try rewrite eqb_refl; cbn.
@@ -879,6 +905,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     - (* Proc_Const *)
       cbn; intros s Hin.
       rewrite combine_map_fst in Hin; auto.
+      rewrite combine_map_fst; auto.
       destruct (in_dec eq_dec s l); tauto.
 
     - (* Proc_Link w x *)
@@ -1489,26 +1516,26 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   (* If s is not a channel of p, leave p unchanged *)
   Fixpoint proc_rename (p : Process) (s : chn) (t : chn) :=
   match p with
-  | Proc_Const c l => Proc_Const c (str_list_repl l s t)
-  | Proc_Link x y => Proc_Link (if eqb x s then t else x) (if eqb y s then t else y)
+  | Proc_Const c l => Proc_Const c (senv_rename l s t)
+  | Proc_Link x y a => Proc_Link (if eqb x s then t else x) (if eqb y s then t else y) a
   | Proc_Comp x a p q => if eqb x s then Proc_Comp x a p q else Proc_Comp x a (proc_rename p s t) (proc_rename q s t)
   | Proc_OutCh x y p q => if eqb x s then Proc_OutCh t y p (proc_rename q s t) else if eqb y s then Proc_OutCh x y p (proc_rename q s t) else Proc_OutCh x y (proc_rename p s t) (proc_rename q s t)
   | Proc_OutChAndSplit x y l p q => if eqb x s then Proc_OutChAndSplit t y l p (proc_rename q s t) else if eqb y s then Proc_OutChAndSplit x y (str_list_repl l s t) p (proc_rename q s t) else Proc_OutChAndSplit x y (str_list_repl l s t) (proc_rename p s t) (proc_rename q s t)
   | Proc_InCh x y p => if eqb y s then Proc_InCh x y p else if eqb x s then Proc_InCh t y (proc_rename p s t) else Proc_InCh x y (proc_rename p s t)
-  | Proc_OutLeft x p => Proc_OutLeft (if eqb x s then t else x) (proc_rename p s t)
-  | Proc_OutRight x p => Proc_OutRight (if eqb x s then t else x) (proc_rename p s t)
+  | Proc_OutLeft x b p => Proc_OutLeft (if eqb x s then t else x) b (proc_rename p s t)
+  | Proc_OutRight x a p => Proc_OutRight (if eqb x s then t else x) a (proc_rename p s t)
   | Proc_InCase x p q => Proc_InCase (if eqb x s then t else x) (proc_rename p s t) (proc_rename q s t)
   | Proc_Server x y p => if eqb x s then Proc_Server t y p else if eqb y s then Proc_Server x y p else Proc_Server x y (proc_rename p s t)
   | Proc_Client x y p => if eqb x s then Proc_Client t y p else if eqb y s then Proc_Client x y p else Proc_Client x y (proc_rename p s t)
-  | Proc_ClientNull x p => if eqb x s then Proc_ClientNull t p else Proc_ClientNull x (proc_rename p s t)
+  | Proc_ClientNull x a p => if eqb x s then Proc_ClientNull t a p else Proc_ClientNull x a (proc_rename p s t)
   | Proc_ClientSplit x y p => if eqb y s then Proc_ClientSplit x y p else if eqb x s then Proc_ClientSplit t y (proc_rename p s t) else Proc_ClientSplit x y (proc_rename p s t)
   | Proc_CompAndSplit x a l p q => if eqb x s then Proc_CompAndSplit x a l p q else Proc_CompAndSplit x a (str_list_repl l s t) (proc_rename p s t) (proc_rename q s t)
   | Proc_OutTyp x a v b p => if eqb x s then Proc_OutTyp t a v b (proc_rename p s t) else Proc_OutTyp x a v b (proc_rename p s t)
-  | Proc_InTyp x v b p => if eqb x s then Proc_InTyp t v b (proc_rename p s t) else Proc_InTyp x v b (proc_rename p s t)
+  | Proc_InTyp x v p => if eqb x s then Proc_InTyp t v (proc_rename p s t) else Proc_InTyp x v (proc_rename p s t)
   | Proc_InTypRename x v v' p => if eqb x s then Proc_InTypRename t v v' (proc_rename p s t) else Proc_InTypRename x v v' (proc_rename p s t)
   | Proc_OutUnit x => if eqb x s then Proc_OutUnit t else Proc_OutUnit x
   | Proc_InUnit x p => if eqb x s then Proc_InUnit t p else Proc_InUnit x (proc_rename p s t)
-  | Proc_EmptyCase x l => if eqb x s then Proc_EmptyCase t l else Proc_EmptyCase x (str_list_repl l s t)
+  | Proc_EmptyCase x l => if eqb x s then Proc_EmptyCase t l else Proc_EmptyCase x (senv_rename l s t)
   end.
 
   Lemma proc_rename_ident : forall p s, proc_rename p s s = p.
@@ -1516,7 +1543,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     intros p s.
     induction p.
     all: cbn; repeat match goal with |- context[eqb ?x ?y] => destruct (eqb_spec x y); try subst end; try congruence.
-    all: rewrite str_list_repl_ident; auto; congruence.
+    2,3,4: rewrite str_list_repl_ident; auto; congruence.
+    all: rewrite senv_rename_ident; auto.
   Qed.
 
   Hint Rewrite proc_rename_ident : proc_simpl.
@@ -1545,6 +1573,7 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
     - (* Proc_Const *)
       cbn; intros s t Hneq Hallow.
       rewrite combine_map_fst; auto.
+      rewrite combine_map_fst in Hallow; auto.
       destruct (in_dec eq_dec s l).
       + left; split; auto.
         rewrite senv_rename_combine; auto.
@@ -1553,7 +1582,8 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         * rewrite <- H1; apply str_list_repl_length.
 
       + right; split; auto.
-        rewrite str_list_repl_nin; auto.
+        rewrite senv_rename_nin; auto.
+        rewrite combine_map_fst; auto.
 
     - (* Proc_Link *)
       cbn; intros s t Hneq Hallow.
@@ -2806,7 +2836,6 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
           cbn.
           rewrite n'.
           fold (senv_rename gamma s t).
-          rewrite <- senv_rename_repl.
 
           constructor.
           -- (* nodup *)
@@ -2818,7 +2847,6 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
         * (* Case 3: s not a channel *)
           cbn in n0.
           right; split; auto.
-          rewrite <- senv_rename_repl.
           rewrite senv_rename_nin; auto.
 
     - (* Permutation *)
@@ -2840,25 +2868,25 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   Fixpoint proc_var_subst_pre (p : Process) (v : pvn) (v' : pvn) : Prop :=
   match p with
   | Proc_Const _ _ => True
-  | Proc_Link x y => True
-  | Proc_Comp x a p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
-  | Proc_OutCh x y p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
-  | Proc_OutChAndSplit x y l p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
-  | Proc_InCh x y p => proc_var_subst_pre p v v'
-  | Proc_OutLeft x p => proc_var_subst_pre p v v'
-  | Proc_OutRight x p => proc_var_subst_pre p v v'
-  | Proc_InCase x p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
-  | Proc_Server x y p => proc_var_subst_pre p v v'
-  | Proc_Client x y p => proc_var_subst_pre p v v'
-  | Proc_ClientNull x p => proc_var_subst_pre p v v'
-  | Proc_ClientSplit x y p => proc_var_subst_pre p v v'
-  | Proc_CompAndSplit x a l p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
-  | Proc_OutTyp x a w b p => ~ In v' (styp_forbidden b w) /\ ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v'
-  | Proc_InTyp x w _ p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
-  | Proc_InTypRename x w w' p => w <> v' /\ proc_var_subst_pre p v v'
-  | Proc_OutUnit x => True
-  | Proc_InUnit x p => proc_var_subst_pre p v v'
-  | Proc_EmptyCase x l => True
+  | Proc_Link _ _ _ => True
+  | Proc_Comp _ a p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_OutCh _ _ p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_OutChAndSplit _ _ _ p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_InCh _ _ p => proc_var_subst_pre p v v'
+  | Proc_OutLeft _ _ p => proc_var_subst_pre p v v'
+  | Proc_OutRight _ _ p => proc_var_subst_pre p v v'
+  | Proc_InCase _ p q => proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_Server _ _ p => proc_var_subst_pre p v v'
+  | Proc_Client _ _ p => proc_var_subst_pre p v v'
+  | Proc_ClientNull _ _ p => proc_var_subst_pre p v v'
+  | Proc_ClientSplit _ _ p => proc_var_subst_pre p v v'
+  | Proc_CompAndSplit _ a _ p q => ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v' /\ proc_var_subst_pre q v v'
+  | Proc_OutTyp _ a w b p => ~ In v' (styp_forbidden b w) /\ ~ In v' (styp_forbidden a v) /\ proc_var_subst_pre p v v'
+  | Proc_InTyp _ w p => if pvn_eqb w v then True else w <> v' /\ proc_var_subst_pre p v v'
+  | Proc_InTypRename _ w _ p => w <> v' /\ proc_var_subst_pre p v v'
+  | Proc_OutUnit _ => True
+  | Proc_InUnit _ p => proc_var_subst_pre p v v'
+  | Proc_EmptyCase _ _ => True
   end.
 
   (* Replace a free type variable in a process with an expression *)
@@ -2866,26 +2894,26 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
   (* if v is not a free variable in p, leave p unchanged *)
   Fixpoint proc_var_subst (p : Process) (v : pvn) (e : STyp) : Process :=
   match p with
-  | Proc_Const c l => Proc_Const c l
-  | Proc_Link x y => Proc_Link x y
+  | Proc_Const c l => Proc_Const c (map (fun r => (fst r, styp_subst v (snd r) e)) l)
+  | Proc_Link x y a => Proc_Link x y (styp_subst v a e)
   | Proc_Comp x a p q => Proc_Comp x (styp_subst v a e) (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_OutCh x y p q => Proc_OutCh x y (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_OutChAndSplit x y l p q => Proc_OutChAndSplit x y l (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_InCh x y p => Proc_InCh x y (proc_var_subst p v e)
-  | Proc_OutLeft x p => Proc_OutLeft x (proc_var_subst p v e)
-  | Proc_OutRight x p => Proc_OutRight x (proc_var_subst p v e)
+  | Proc_OutLeft x b p => Proc_OutLeft x (styp_subst v b e) (proc_var_subst p v e)
+  | Proc_OutRight x a p => Proc_OutRight x (styp_subst v a e) (proc_var_subst p v e)
   | Proc_InCase x p q => Proc_InCase x (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_Server x y p => Proc_Server x y (proc_var_subst p v e)
   | Proc_Client x y p => Proc_Client x y (proc_var_subst p v e)
-  | Proc_ClientNull x p => Proc_ClientNull x (proc_var_subst p v e)
+  | Proc_ClientNull x a p => Proc_ClientNull x (styp_subst v a e) (proc_var_subst p v e)
   | Proc_ClientSplit x y p => Proc_ClientSplit x y (proc_var_subst p v e)
   | Proc_CompAndSplit x a l p q => Proc_CompAndSplit x (styp_subst v a e) l (proc_var_subst p v e) (proc_var_subst q v e)
   | Proc_OutTyp x a w b p => Proc_OutTyp x (styp_subst v a e) w (if pvn_eqb w v then b else styp_subst v b e) (proc_var_subst p v e)
-  | Proc_InTyp x w b p => Proc_InTyp x w (if pvn_eqb w v then b else styp_subst v b e) (if pvn_eqb w v then p else proc_var_subst p v e)
+  | Proc_InTyp x w p => Proc_InTyp x w (if pvn_eqb w v then p else proc_var_subst p v e)
   | Proc_InTypRename x w w' p => Proc_InTypRename x w w' (proc_var_subst p v e)
   | Proc_OutUnit x => Proc_OutUnit x
   | Proc_InUnit x p => Proc_InUnit x (proc_var_subst p v e)
-  | Proc_EmptyCase x l => Proc_EmptyCase x l
+  | Proc_EmptyCase x l => Proc_EmptyCase x (map (fun r => (fst r, styp_subst v (snd r) e)) l)
   end.
 
   Lemma cp_var_subst :
@@ -3452,11 +3480,9 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
 
     - (* STyp_Top *)
       cbn; intros _ _.
-      eassert (Heq : map fst gamma = _).
-      2: rewrite Heq; constructor.
-      1: rewrite map_map; cbn; auto.
-      1: rewrite map_map; cbn; auto.
-      unfold senv_valid; rewrite map_map; auto.
+      constructor.
+      + rewrite map_map; cbn; auto.
+      + unfold senv_valid; rewrite map_map; cbn; auto.
 
     - (* Permutation *)
       intros Hpre1 Hpre2.
@@ -3465,6 +3491,380 @@ Module Type Wadler_Proc (PropVarName : UsualDecidableType) (ChannelName : UsualD
       eapply cp_perm.
       1: apply IHHcp.
       apply Permutation_map; auto.
+  Qed.
+
+  (* The proc term contains complete type information *)
+  Fixpoint proc_channel_type (p : Process) (s : chn) :=
+  match p with
+  | Proc_Const _ l => find_in_senv s l
+  | Proc_Link w x a => if eqb x s then a else dual a
+  | Proc_Comp _ _ p q => if in_dec eq_dec s (proc_channels p) then proc_channel_type p s else proc_channel_type q s
+  | Proc_OutCh x y p q => if eqb x s then STyp_Times (proc_channel_type p y) (proc_channel_type q x) else if in_dec eq_dec s (proc_channels q) then proc_channel_type q s else proc_channel_type p s
+  | Proc_OutChAndSplit x y _ p q => if eqb x s then STyp_Times (proc_channel_type p y) (proc_channel_type q x) else if in_dec eq_dec s (proc_channels q) then proc_channel_type q s else proc_channel_type p s
+  | Proc_InCh x y p => if eqb x s then STyp_Par (proc_channel_type p y) (proc_channel_type p x) else proc_channel_type p s
+  | Proc_OutLeft x b p => if eqb x s then STyp_Plus (proc_channel_type p x) b else proc_channel_type p s
+  | Proc_OutRight x a p => if eqb x s then STyp_Plus a (proc_channel_type p x) else proc_channel_type p s
+  | Proc_InCase x p q => if eqb x s then STyp_With (proc_channel_type p x) (proc_channel_type q x) else proc_channel_type p s
+  | Proc_Server x y p => if eqb x s then STyp_Excl (proc_channel_type p y) else proc_channel_type p s
+  | Proc_Client x y p => if eqb x s then STyp_Ques (proc_channel_type p y) else proc_channel_type p s
+  | Proc_ClientNull x a p => if eqb x s then STyp_Ques a else proc_channel_type p s
+  | Proc_ClientSplit _ _ p => proc_channel_type p s
+  | Proc_CompAndSplit _ _ _ p q => if in_dec eq_dec s (proc_channels p) then proc_channel_type p s else proc_channel_type q s
+  | Proc_OutTyp x _ w b p => if eqb x s then STyp_Exists w b else proc_channel_type p s
+  | Proc_InTyp x w p => if eqb x s then STyp_Forall w (proc_channel_type p x) else proc_channel_type p s
+  | Proc_InTypRename x w w' p => if eqb x s then match proc_channel_type p x with STyp_Forall w a => STyp_Forall w' (styp_subst w a (STyp_Var w')) | _ => STyp_Zero end else proc_channel_type p s
+  | Proc_OutUnit _ => STyp_One
+  | Proc_InUnit x p => if eqb x s then STyp_Bot else proc_channel_type p s
+  | Proc_EmptyCase x l => if eqb x s then STyp_Top else find_in_senv s l
+  end.
+
+  Lemma proc_channel_type_correct p senv s t :
+  cp p senv ->
+  In (s, t) senv ->
+  proc_channel_type p s = t.
+  Proof.
+    intros Hcp.
+    pose proof Hcp as Hcp'.
+    apply cp_senv_valid in Hcp'.
+    revert s t.
+    induction Hcp.
+    - (* Proc_Const *)
+      intros s t Hin; cbn.
+      apply find_in_senv_correct; auto.
+
+    - (* Proc_Link *)
+      intros s t Hin; cbn.
+      cbn in Hin; destruct Hin as [Hin | [Hin | Hin]]; [| | tauto].
+      + injection Hin; intros; subst; destruct (eqb_spec x s); tauto.
+      + injection Hin; intros; subst; rewrite eqb_refl; auto.
+
+    - (* Proc_Comp *)
+      intros s t Hin; cbn.
+      assert (Hdisjoint : senv_disjoint gamma delta) by eauto with senv_valid.
+      destruct (in_dec eq_dec s (proc_channels p)).
+      + rewrite <- (proc_channels_perm _ _ Hcp1) in i.
+        cbn in i.
+        destruct i as [i | i].
+        * subst s.
+          apply (in_map fst) in Hin.
+          rewrite map_app, in_app_iff in Hin.
+          assert (~ In x (map fst gamma)) by eauto with senv_valid.
+          assert (~ In x (map fst delta)) by eauto with senv_valid.
+          tauto.
+        * specialize (Hdisjoint _ i).
+          rewrite in_app_iff in Hin.
+          destruct Hin as [Hin | Hin].
+          -- apply IHHcp1; auto.
+             2: right; auto.
+             eauto with senv_valid.
+          -- apply (in_map fst) in Hin; tauto.
+      + rewrite in_app_iff in Hin.
+        rewrite <- (proc_channels_perm _ _ Hcp1) in n.
+        cbn in n.
+        assert (n' : ~ In s (map fst gamma)) by tauto.
+        destruct Hin as [Hin | Hin].
+        * apply (in_map fst) in Hin; tauto.
+        * apply IHHcp2; auto.
+          2: right; auto.
+          eauto with senv_valid.
+
+    - (* Proc_OutCh *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: apply (in_map fst) in Hin; rewrite map_app, in_app_iff in Hin; assert (~ In x (map fst delta)) by eauto with senv_valid; tauto.
+        injection Hin; intros; subst t; clear Hin.
+        specialize (IHHcp1 ltac:(eauto with senv_valid) y a ltac:(left; auto)).
+        specialize (IHHcp2 ltac:(eauto with senv_valid) x b ltac:(left; auto)).
+        rewrite IHHcp1, IHHcp2; auto.
+      + cbn in Hin; destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst s; tauto.
+        destruct (in_dec eq_dec s (proc_channels q)).
+        * rewrite <- (proc_channels_perm _ _ Hcp2) in i.
+          cbn in i; destruct i as [i | i]; [tauto|].
+          specialize (H0 s).
+          rewrite in_app_iff in Hin.
+          destruct Hin as [Hin | Hin].
+          1: apply (in_map fst) in Hin; tauto.
+          apply IHHcp2; auto.
+          2: right; auto.
+          eauto with senv_valid.
+        * rewrite <- (proc_channels_perm _ _ Hcp2) in n0; cbn in n0.
+          rewrite in_app_iff in Hin.
+          destruct Hin as [Hin | Hin].
+          2: apply (in_map fst) in Hin; tauto.
+          apply IHHcp1; auto.
+          2: right; auto.
+          eauto with senv_valid.
+
+    - (* Proc_OutChAndSplit *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: apply (in_map fst) in Hin;
+           do 2 rewrite map_app, in_app_iff in Hin;
+           assert (~ In x (map fst delta2)) by (rewrite Permutation_middle in Hcp2; eauto with senv_valid);
+           assert (~ In x (map fst gamma)) by eauto with senv_valid;
+           tauto.
+        injection Hin; intros; subst t; clear Hin.
+        specialize (IHHcp1 ltac:(eauto with senv_valid) y a ltac:(left; auto)).
+        specialize (IHHcp2 ltac:(eauto with senv_valid) x b ltac:(left; auto)).
+        rewrite IHHcp1, IHHcp2; auto.
+      + cbn in Hin; destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst s; tauto.
+        rewrite (Permutation_app_comm delta1) in Hin.
+        rewrite app_assoc in Hin.
+        destruct (in_dec eq_dec s (proc_channels q)).
+        * rewrite <- (proc_channels_perm _ _ Hcp2) in i; cbn in i.
+          destruct i as [i | i]; [tauto|].
+          rewrite map_app, in_app_iff in i.
+          specialize (H1 s).
+          assert (Hdisjoint : senv_disjoint gamma delta1) by eauto with senv_valid senv_disjoint.
+          specialize (Hdisjoint s).
+          rewrite in_app_iff in Hin.
+          destruct Hin as [Hin | Hin].
+          2: apply (in_map fst) in Hin; tauto.
+          apply IHHcp2; auto.
+          2: right; auto.
+          eauto with senv_valid.
+        * rewrite <- (proc_channels_perm _ _ Hcp2) in n0; cbn in n0.
+          rewrite in_app_iff in Hin.
+          destruct Hin as [Hin | Hin].
+          1: apply (in_map fst) in Hin; tauto.
+          apply IHHcp1; auto.
+          2: right; rewrite in_app_iff; auto.
+          eauto with senv_valid.
+
+    - (* Proc_InCh *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        specialize (IHHcp ltac:(eauto with senv_valid) x b ltac:(left; auto)) as Ha.
+        specialize (IHHcp ltac:(eauto with senv_valid) y a ltac:(right; left; auto)) as Hb.
+        rewrite Ha, Hb; auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        2: right; right; auto.
+        eauto with senv_valid.
+
+    - (* Proc_OutLeft *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        rewrite (IHHcp ltac:(eauto with senv_valid) x a ltac:(left; auto)); auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        right; auto.
+
+    - (* Proc_OutRight *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        rewrite (IHHcp ltac:(eauto with senv_valid) x b ltac:(left; auto)); auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        right; auto.
+
+    - (* Proc_InCase *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        specialize (IHHcp1 ltac:(eauto with senv_valid) x a ltac:(left; auto)).
+        specialize (IHHcp2 ltac:(eauto with senv_valid) x b ltac:(left; auto)).
+        rewrite IHHcp1, IHHcp2; auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp1; auto.
+        right; auto.
+
+    - (* Proc_Server *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        rewrite (IHHcp ltac:(eauto with senv_valid) y a ltac:(left; auto)); auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        2: right; auto.
+        eauto with senv_valid.
+
+    - (* Proc_Client *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        rewrite (IHHcp ltac:(eauto with senv_valid) y a ltac:(left; auto)); auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        2: right; auto.
+        eauto with senv_valid.
+
+    - (* Proc_ClientNull *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin; auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        eauto with senv_valid.
+
+    - (* Proc_ClientSplit *)
+      intros s t Hin; cbn.
+      apply IHHcp; auto.
+      2: cbn; cbn in Hin; tauto.
+      eauto with senv_valid.
+
+    - (* Proc_CompAndSplit *)
+      intros s t Hin; cbn.
+      assert (~ In x (map fst gamma)) by eauto with senv_valid.
+      assert (~ In x (map fst delta1)) by (rewrite Permutation_middle in Hcp1; eauto with senv_valid).
+      assert (~ In x (map fst delta2)) by (rewrite Permutation_middle in Hcp2; eauto with senv_valid).
+      rewrite app_assoc in Hin.
+      destruct (in_dec eq_dec s (proc_channels p)).
+      + rewrite <- (proc_channels_perm _ _ Hcp1) in i; cbn in i.
+        destruct i as [i | i].
+        1: subst s; apply (in_map fst) in Hin; do 2 rewrite map_app, in_app_iff in Hin; tauto.
+        rewrite map_app, in_app_iff in i.
+        specialize (H0 s).
+        assert (Hdisjoint : senv_disjoint gamma delta2) by eauto with senv_valid senv_disjoint.
+        specialize (Hdisjoint s).
+        rewrite in_app_iff in Hin.
+        destruct Hin as [Hin | Hin].
+        2: apply (in_map fst) in Hin; tauto.
+        apply IHHcp1; auto.
+        2: right; auto.
+        eauto with senv_valid.
+      + rewrite <- (proc_channels_perm _ _ Hcp1) in n; cbn in n.
+        rewrite in_app_iff in Hin.
+        destruct Hin as [Hin | Hin].
+        1: apply (in_map fst) in Hin; tauto.
+        apply IHHcp2; auto.
+        2: right; rewrite in_app_iff; auto.
+        eauto with senv_valid.
+
+    - (* Proc_OutTyp *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin; auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        right; auto.
+
+    - (* Proc_InTyp *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        rewrite (IHHcp ltac:(eauto with senv_valid) x a ltac:(left; auto)); auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        right; auto.
+
+    - (* Proc_InTypRename *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin.
+        rewrite (IHHcp ltac:(eauto with senv_valid) x _ ltac:(left; auto)); auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        right; auto.
+
+    - (* Proc_OutUnit *)
+      intros s t Hin; cbn.
+      cbn in Hin; destruct Hin as [Hin | Hin]; [|tauto].
+      injection Hin; intros; subst; auto.
+
+    - (* Proc_InUnit *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin; auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply IHHcp; auto.
+        eauto with senv_valid.
+
+    - (* Proc_EmptyCase *)
+      intros s t Hin; cbn.
+      destruct (eqb_spec x s).
+      + subst s.
+        cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        2: assert (Hnin : ~ In x (map fst gamma)) by eauto with senv_valid; apply (in_map fst) in Hin; tauto.
+        injection Hin; intros; subst; clear Hin; auto.
+      + cbn in Hin.
+        destruct Hin as [Hin | Hin].
+        1: injection Hin; intros; subst; tauto.
+        apply find_in_senv_correct; auto.
+
+    - (* Permutation *)
+      intros s t Hin.
+      rewrite <- H in Hin.
+      apply IHHcp; auto.
+      rewrite H; auto.
   Qed.
 
 End Wadler_Proc.

@@ -183,6 +183,17 @@ Proof.
     rewrite IHl1; auto.
 Qed.
 
+Lemma combine_fst_snd :
+  forall {T U : Type} (l : list (T * U)),
+  l = combine (map fst l) (map snd l).
+Proof.
+  intros T U l.
+  induction l.
+  - cbn; auto.
+  - cbn; rewrite <- IHl.
+    destruct a; auto.
+Qed.
+
 Lemma filter_filter {T : Type} :
 forall (f g : T -> bool) l, filter f (filter g l) = filter (fun x => f x && g x) l.
 Proof.
